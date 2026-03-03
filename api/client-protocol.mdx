@@ -1,0 +1,225 @@
+---
+title: 'ReliableClientProtocol'
+description: 'Client-side implementation of the Selective Repeat UDP protocol for reliable data transmission'
+---
+
+## Overview
+
+The `ReliableClientProtocol` class provides client-side implementation of the Selective Repeat ARQ protocol over UDP. It handles connection establishment via three-way handshake, reliable data transmission with windowing, and automatic retransmission of lost packets.
+
+## Connection Establishment
+
+### connection()
+
+Establishes a three-way handshake connection with the server.
+
+<ParamField path="socket" type="DatagramSocket" required>
+  The UDP socket to use for communication
+</ParamField>
+
+<ParamField path="serverAddr" type="InetSocketAddress" required>
+  The server's address and port number
+</ParamField>
+
+<ResponseField name="port" type="int">
+  The server's data port assigned for this connection
+</ResponseField>
+
+```java
+DatagramSocket socket = new DatagramSocket();
+InetSocketAddress serverAddress = new InetSocketAddress("127.0.0.1", 8000);
+int dataPort = ReliableClientProtocol.connection(socket, serverAddress);
+```
+
+<Info>
+The connection process implements a three-way handshake:
+1. Client sends SYN packet (type=2)
+2. Server responds with SYN-ACK (type=3)
+3. Client sends ACK (type=1)
+</Info>
+
+## Data Transmission
+
+### requestresponse()
+
+Sends data reliably to the server and waits for a response using the Selective Repeat protocol.
+
+<ParamField path="socket" type="DatagramSocket" required>
+  The UDP socket for communication
+</ParamField>
+
+<ParamField path="serverAddr" type="InetSocketAddress" required>
+  The server's data port address
+</ParamField>
+
+<ParamField path="data" type="String" required>
+  The data payload to send to the server
+</ParamField>
+
+<ResponseField name="response" type="String">
+  The complete response received from the server
+</ResponseField>
+
+```java
+String httpRequest = "GET /index.html HTTP/1.0\r\n\r\n";
+String response = ReliableClientProtocol.requestresponse(
+    socket, 
+    new InetSocketAddress("127.0.0.1", dataPort), 
+    httpRequest
+);
+```
+
+<Accordion title="How it works" icon="gear">
+  The method automatically:
+  - Fragments data into 1013-byte chunks
+  - Sends the total packet count first
+  - Transmits packets using a sliding window (size: 100)
+  - Handles ACKs and retransmits on timeout or NACK
+  - Receives the server's response using the same protocol
+</Accordion>
+
+## Internal Methods
+
+### sendreq()
+
+Handles the sliding window transmission logic with selective repeat.
+
+<ParamField path="nofpackets" type="int" required>
+  Total number of data packets to send
+</ParamField>
+
+<ParamField path="serverAddr" type="InetSocketAddress" required>
+  Destination server address
+</ParamField>
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Socket for transmission
+</ParamField>
+
+<ParamField path="chunks" type="List<byte[]>" required>
+  List of data chunks to send
+</ParamField>
+
+<Warning>
+This is an internal method called by `requestresponse()`. Direct use is not recommended.
+</Warning>
+
+### isAcked()
+
+Timeout handler that checks if a packet has been acknowledged and retransmits if necessary.
+
+<ParamField path="seq" type="int" required>
+  Sequence number of the packet to check
+</ParamField>
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Socket for retransmission
+</ParamField>
+
+<ParamField path="retries" type="int" required>
+  Current retry attempt count
+</ParamField>
+
+<Note>
+Packets are retransmitted up to 10 times before being abandoned.
+</Note>
+
+### response()
+
+Waits for and receives the complete response from the server.
+
+<ResponseField name="response" type="String">
+  The assembled response data from all received packets
+</ResponseField>
+
+### getRequestFromPacket()
+
+Receives and assembles packets using the Selective Repeat protocol.
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Socket to receive packets from
+</ParamField>
+
+<ParamField path="totalPackets" type="int" required>
+  Expected number of packets to receive
+</ParamField>
+
+<ResponseField name="request" type="String">
+  The complete assembled data from all packets
+</ResponseField>
+
+## Protocol Constants
+
+```java
+static int lastack = 0;           // Last acknowledged packet sequence number
+static int window = 100;          // Sliding window size
+static InetSocketAddress routerAddr = 
+    new InetSocketAddress("127.0.0.1", 3000);  // Router address
+```
+
+## Error Handling
+
+<AccordionGroup>
+  <Accordion title="Socket Timeout" icon="clock">
+    When waiting for ACKs, the socket uses a 50ms timeout. On timeout, the size packet is retransmitted.
+  </Accordion>
+  
+  <Accordion title="Lost Packets" icon="triangle-exclamation">
+    The protocol handles packet loss through:
+    - Cumulative ACKs for in-order packets
+    - NACKs (type=4) for out-of-order packets
+    - Timeout-based retransmission with exponential backoff
+  </Accordion>
+  
+  <Accordion title="Connection Closure" icon="door-closed">
+    When a packet with type=6 is received, the connection is closed gracefully.
+  </Accordion>
+</AccordionGroup>
+
+## Example Usage
+
+```java
+import java.net.DatagramSocket;
+import java.net.InetSocketAddress;
+import client.ReliableClientProtocol;
+
+public class Example {
+    public static void main(String[] args) {
+        try {
+            // Create socket
+            DatagramSocket socket = new DatagramSocket();
+            
+            // Establish connection
+            InetSocketAddress serverAddress = 
+                new InetSocketAddress("192.168.1.100", 8000);
+            int dataPort = ReliableClientProtocol.connection(
+                socket, serverAddress
+            );
+            
+            // Send request and get response
+            String request = "GET /data HTTP/1.0\r\n\r\n";
+            String response = ReliableClientProtocol.requestresponse(
+                socket,
+                new InetSocketAddress("192.168.1.100", dataPort),
+                request
+            );
+            
+            System.out.println("Response: " + response);
+            
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="ServerTcpProtocl" icon="server" href="/api/server-protocol">
+    Server-side protocol implementation
+  </Card>
+  <Card title="Packet Format" icon="box" href="/api/packet-format">
+    Packet structure and builder pattern
+  </Card>
+</CardGroup>

@@ -1,0 +1,556 @@
+---
+title: 'HTTP Commands (httpc)'
+description: 'Command-line reference for httpc GET and POST operations over reliable UDP'
+---
+
+## Overview
+
+The `httpc` command-line tool is a curl-like HTTP client that operates over the reliable UDP protocol. It supports GET and POST requests with headers, inline data, file uploads, and verbose output.
+
+## General Usage
+
+```bash
+httpc command [arguments]
+```
+
+<Info>
+All requests are sent through the reliable UDP protocol implementation, providing TCP-like reliability over UDP.
+</Info>
+
+## Commands
+
+### help
+
+Displays usage information.
+
+```bash
+httpc help
+httpc help get
+httpc help post
+```
+
+<ResponseExample>
+```
+httpc is a curl-like application but supports HTTP protocol only.
+Usage:
+    httpc command [arguments]
+The commands are:
+    get     executes a HTTP GET request and prints the response.
+    post    executes a HTTP POST request and prints the response.
+    help    prints this screen.
+
+Use "httpc help [command]" for more information about a command.
+```
+</ResponseExample>
+
+## GET Command
+
+Executes an HTTP GET request for a given URL.
+
+### Syntax
+
+```bash
+httpc get [-v] [-h key:value] URL
+```
+
+### Parameters
+
+<ParamField path="-v" type="flag">
+  Verbose mode. Prints the detailed response including protocol, status, and headers.
+</ParamField>
+
+<ParamField path="-h" type="string">
+  Associates headers to the HTTP request with the format `key:value`. Can be used multiple times.
+</ParamField>
+
+<ParamField path="URL" type="string" required>
+  The target URL for the GET request. Must include protocol, host, and path.
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+
+```bash Simple GET request
+httpc get http://httpbin.org/get
+```
+
+```bash GET with query parameters
+httpc get "http://httpbin.org/get?course=networking&assignment=1"
+```
+
+```bash GET with headers
+httpc get -h Content-Type:application/json http://httpbin.org/get
+```
+
+```bash GET with multiple headers
+httpc get \
+  -h Content-Type:application/json \
+  -h Authorization:Bearer-token123 \
+  http://httpbin.org/get
+```
+
+```bash Verbose GET request
+httpc get -v http://httpbin.org/get
+```
+
+```bash GET with output to file
+httpc get -o response.txt http://httpbin.org/get
+```
+
+</CodeGroup>
+
+### Response Format
+
+<Tabs>
+  <Tab title="Normal Mode">
+    Shows only the response body:
+    
+    ```json
+    {
+      "args": {},
+      "headers": {
+        "Host": "httpbin.org"
+      },
+      "url": "http://httpbin.org/get"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Verbose Mode (-v)">
+    Shows status, headers, and body:
+    
+    ```
+    HTTPFC/1.0 200 OK
+    Content-Type: application/json
+    Content-Length: 312
+    
+    {
+      "args": {},
+      "headers": {
+        "Host": "httpbin.org"
+      },
+      "url": "http://httpbin.org/get"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Help Text
+
+```bash
+httpc help get
+```
+
+<ResponseExample>
+```
+usage: httpc get [-v] [-h key:value] URL
+
+Get executes a HTTP GET request for a given URL.
+
+    -v	Prints the detail of the response such as protocol, status, and headers.
+    -h key:value	Associates headers to HTTP Request with the format 'key:value'.
+```
+</ResponseExample>
+
+## POST Command
+
+Executes an HTTP POST request for a given URL with inline data or file content.
+
+### Syntax
+
+```bash
+httpc post [-v] [-h key:value] [-d inline-data] [-f file] [-o output] URL
+```
+
+### Parameters
+
+<ParamField path="-v" type="flag">
+  Verbose mode. Prints the detailed response including protocol, status, and headers.
+</ParamField>
+
+<ParamField path="-h" type="string">
+  Associates headers to the HTTP request with the format `key:value`. Can be used multiple times.
+</ParamField>
+
+<ParamField path="-d" type="string">
+  Associates inline data to the body of the HTTP POST request.
+</ParamField>
+
+<ParamField path="-f" type="string">
+  Associates the content of a file to the body of the HTTP POST request.
+</ParamField>
+
+<ParamField path="-o" type="string">
+  Writes the response output to the specified file instead of stdout.
+</ParamField>
+
+<ParamField path="URL" type="string" required>
+  The target URL for the POST request.
+</ParamField>
+
+<Warning>
+Either `-d` or `-f` can be used, but not both simultaneously.
+</Warning>
+
+### Examples
+
+<CodeGroup>
+
+```bash POST with inline data
+httpc post -h Content-Type:application/json \
+  -d '{"Assignment": 1}' \
+  http://httpbin.org/post
+```
+
+```bash POST with file content
+httpc post -f data.json http://httpbin.org/post
+```
+
+```bash POST with multiple headers
+httpc post \
+  -h Content-Type:application/json \
+  -h Authorization:Bearer-token123 \
+  -d '{"user":"john"}' \
+  http://httpbin.org/post
+```
+
+```bash Verbose POST request
+httpc post -v \
+  -h Content-Type:application/json \
+  -d '{"key":"value"}' \
+  http://httpbin.org/post
+```
+
+```bash POST with output to file
+httpc post \
+  -d '{"data":"test"}' \
+  -o result.json \
+  http://httpbin.org/post
+```
+
+```bash POST from file with verbose output
+httpc post -v -f request.json http://httpbin.org/post
+```
+
+</CodeGroup>
+
+### Request Format
+
+The POST command automatically constructs a proper HTTP request:
+
+```http
+POST /post HTTPFC/1.0
+Content-Type: application/json
+Content-Length: 20
+
+{"Assignment": 1}
+```
+
+### Help Text
+
+```bash
+httpc help post
+```
+
+<ResponseExample>
+```
+usage: httpc post [-v] [-h key:value] [-d inline-data] [-f file] URL
+
+Post executes a HTTP POST request for a given URL with inline data or from file.
+
+    -v	Prints the detail of the response such as protocol, status, and headers.
+    -h key:value	 Associates headers to HTTP Request with the format 'key:value'.
+    -d string	 Associates an inline data to the body HTTP POST request.
+    -f file	Associates the content of a file to the body HTTP POST request
+
+Either [-d] or [-f] can be used but not both.
+```
+</ResponseExample>
+
+## Common Flags
+
+<AccordionGroup>
+  <Accordion title="-v (Verbose)" icon="eye">
+    **Purpose**: Display full response details
+    
+    **Behavior**:
+    - Shows HTTP version and status code
+    - Displays all response headers
+    - Shows response body
+    
+    **Example**:
+    ```bash
+    httpc get -v http://httpbin.org/get
+    ```
+    
+    **Output**:
+    ```
+    HTTPFC/1.0 200 OK
+    Content-Type: application/json
+    Content-Length: 256
+    
+    {"response": "data"}
+    ```
+  </Accordion>
+
+  <Accordion title="-h (Headers)" icon="heading">
+    **Purpose**: Add custom HTTP headers to the request
+    
+    **Format**: `-h key:value`
+    
+    **Usage**:
+    - Can be specified multiple times
+    - No spaces around the colon
+    - Common headers: `Content-Type`, `Authorization`, `Accept`, `User-Agent`
+    
+    **Examples**:
+    ```bash
+    # Single header
+    httpc get -h Accept:application/json http://example.com
+    
+    # Multiple headers
+    httpc post \
+      -h Content-Type:application/json \
+      -h Authorization:Bearer-token \
+      -d '{"data":"value"}' \
+      http://example.com/api
+    ```
+  </Accordion>
+
+  <Accordion title="-d (Inline Data)" icon="keyboard">
+    **Purpose**: Send inline data in POST request body
+    
+    **POST only**: This flag is only valid for POST requests
+    
+    **Usage**:
+    - Mutually exclusive with `-f`
+    - Automatically sets `Content-Length` header
+    - String data is sent as-is
+    
+    **Examples**:
+    ```bash
+    # JSON data
+    httpc post -d '{"name":"John"}' http://example.com/api
+    
+    # Form data
+    httpc post -d 'name=John&email=john@example.com' http://example.com/form
+    
+    # With explicit content type
+    httpc post \
+      -h Content-Type:application/json \
+      -d '{"user":{"name":"John"}}' \
+      http://example.com/api
+    ```
+  </Accordion>
+
+  <Accordion title="-f (File Data)" icon="file">
+    **Purpose**: Send file contents in POST request body
+    
+    **POST only**: This flag is only valid for POST requests
+    
+    **Usage**:
+    - Mutually exclusive with `-d`
+    - Reads entire file into request body
+    - File path is relative to current directory
+    
+    **Examples**:
+    ```bash
+    # Send JSON file
+    httpc post -f request.json http://example.com/api
+    
+    # Send with headers
+    httpc post \
+      -h Content-Type:application/json \
+      -f data.json \
+      http://example.com/api
+    
+    # Verbose with file
+    httpc post -v -f payload.txt http://example.com/upload
+    ```
+  </Accordion>
+
+  <Accordion title="-o (Output File)" icon="floppy-disk">
+    **Purpose**: Write response to a file instead of stdout
+    
+    **Usage**:
+    - Works with both GET and POST
+    - Creates or overwrites the specified file
+    - File path is relative to current directory
+    
+    **Examples**:
+    ```bash
+    # Save GET response
+    httpc get -o response.json http://api.example.com/data
+    
+    # Save POST response
+    httpc post -d '{"query":"test"}' -o result.txt http://example.com/api
+    
+    # Verbose mode with file output
+    httpc get -v -o output.html http://example.com/page
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## URL Format
+
+URLs must follow this format:
+
+```
+http://host:port/path
+```
+
+<ParamField path="protocol" type="string" required>
+  Must be `http://`
+</ParamField>
+
+<ParamField path="host" type="string" required>
+  Hostname or IP address
+</ParamField>
+
+<ParamField path="port" type="number" required>
+  Port number (no default)
+</ParamField>
+
+<ParamField path="path" type="string">
+  Request path (defaults to `/`)
+</ParamField>
+
+### URL Examples
+
+```bash
+# With port
+http://localhost:8080/api/data
+
+# With IP address
+http://192.168.1.100:8000/index.html
+
+# With query parameters
+http://example.com:8080/search?q=test&limit=10
+```
+
+## HTTP Protocol
+
+The client uses a custom HTTP/1.0-like protocol:
+
+<Note>
+The protocol identifier is `HTTPFC/1.0` instead of standard `HTTP/1.0`
+</Note>
+
+### Request Format
+
+```http
+GET /path HTTPFC/1.0
+Header1: value1
+Header2: value2
+
+```
+
+```http
+POST /path HTTPFC/1.0
+Header1: value1
+Content-Length: 15
+
+{"data":"test"}
+```
+
+## Connection Process
+
+<Steps>
+  <Step title="Three-way handshake">
+    The client establishes a reliable connection using SYN, SYN-ACK, ACK packets.
+  </Step>
+  
+  <Step title="Request transmission">
+    The HTTP request is chunked and sent using the Selective Repeat protocol.
+  </Step>
+  
+  <Step title="Response reception">
+    The client receives response packets, sends ACKs/NACKs, and assembles the complete response.
+  </Step>
+  
+  <Step title="Connection closure">
+    The connection is closed after the response is fully received.
+  </Step>
+</Steps>
+
+## Error Messages
+
+<AccordionGroup>
+  <Accordion title="Malformed URL" icon="link-slash">
+    ```
+    malformed URL
+    ```
+    
+    **Cause**: Invalid URL format or missing components
+    
+    **Solution**: Ensure URL follows the format `http://host:port/path`
+  </Accordion>
+
+  <Accordion title="Wrong command" icon="terminal">
+    ```
+    Wrong command
+    ```
+    
+    **Cause**: Command doesn't start with `httpc`
+    
+    **Solution**: Start command with `httpc` followed by `get`, `post`, or `help`
+  </Accordion>
+
+  <Accordion title="Connection Error" icon="wifi-slash">
+    Exceptions during socket operations
+    
+    **Possible causes**:
+    - Server not reachable
+    - Network timeout
+    - Port unavailable
+    
+    **Solution**: Verify server is running and network connectivity
+  </Accordion>
+</AccordionGroup>
+
+## Integration Example
+
+Using the httpc client programmatically:
+
+```java
+import client.Httpc;
+import util.Response;
+
+public class Example {
+    public static void main(String[] args) {
+        Httpc client = new Httpc();
+        
+        try {
+            // Execute GET request
+            String cmd = "httpc get -v http://httpbin.org:80/get";
+            Response response = client.getResponse(cmd);
+            
+            System.out.println("Status: " + response.getStatus());
+            System.out.println("Code: " + response.getCode());
+            
+            if (response.getInFile()) {
+                // Response was written to file
+                System.out.println("Output written to: " + response.getFile());
+            } else {
+                // Print response body
+                System.out.println(response.getBody());
+            }
+            
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="ReliableClientProtocol" icon="computer" href="/api/client-protocol">
+    Underlying reliable UDP protocol
+  </Card>
+  <Card title="Packet Format" icon="box" href="/api/packet-format">
+    Packet structure used for transmission
+  </Card>
+</CardGroup>

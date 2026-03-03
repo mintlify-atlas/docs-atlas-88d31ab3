@@ -1,0 +1,699 @@
+---
+title: 'Server Component'
+description: 'HTTP file server with reliable UDP transport and concurrent client handling'
+---
+
+The server component implements an HTTP file server that communicates over UDP using a reliable transport protocol. It consists of `ServerTcpProtocl` for connection management and `HttpcLib` for HTTP request processing.
+
+## Architecture Overview
+
+<CardGroup cols={2}>
+  <Card title="ServerTcpProtocl" icon="server">
+    Manages UDP connections, handshakes, and reliable data transfer using Selective Repeat ARQ
+  </Card>
+  <Card title="HttpcLib" icon="file-code">
+    Processes HTTP GET and POST requests, handles file operations and response generation
+  </Card>
+</CardGroup>
+
+## ServerTcpProtocl Class
+
+The main server class that handles UDP connection management and reliable packet transmission.
+
+### Key Responsibilities
+
+- Listen for incoming connection requests on main port
+- Perform three-way handshake with clients
+- Create dedicated socket and handler thread for each client
+- Implement Selective Repeat protocol for reliable data transfer
+- Manage multiple concurrent client connections
+
+### Class Structure
+
+```java Server/ServerTcpProtocl.java
+public class ServerTcpProtocl {
+    private DatagramSocket connectionSocket;  // Main listening socket
+    private static HashMap<InetAddress, DatagramSocket> socketMapping;  // Per-client sockets
+    private static String directory;          // Server root directory
+    private static boolean verbose;           // Logging flag
+    
+    private static int lastackRec = 0;        // Last acknowledged packet
+    private static int windowRec = 100;       // Sliding window size
+    private static List<DatagramPacket> packets = new ArrayList<>();
+    
+    public ServerTcpProtocl(int port, String directory, boolean verbose)
+    public void handShake() throws IOException
+    public static class clientHandler implements Runnable
+}
+```
+
+### Initialization
+
+The server is initialized with port, directory, and verbosity settings:
+
+```java Server/ServerTcpProtocl.java
+public ServerTcpProtocl(int port, String directory, boolean verbose) throws IOException {
+    this.connectionSocket = new DatagramSocket(port);
+    socketMapping = new HashMap<>();
+    ServerTcpProtocl.directory = directory;
+    ServerTcpProtocl.verbose = verbose;
+    handShake();  // Start listening for connections
+}
+```
+
+<CodeGroup>
+```java Example Usage
+ServerTcpProtocl server = new ServerTcpProtocl(
+    8000,        // Port
+    "./files",   // Root directory
+    true         // Verbose logging
+);
+```
+
+```bash Command Line
+java -jar server.jar --port 8000 --directory ./files --verbose
+```
+</CodeGroup>
+
+## Connection Establishment
+
+The server implements a three-way handshake protocol:
+
+<Steps>
+  <Step title="Receive SYN">
+    Server listens for SYN packets (type=2) on the main connection socket
+    
+    ```java Server/ServerTcpProtocl.java
+    DatagramPacket request = new DatagramPacket(new byte[1024], 1024);
+    this.connectionSocket.receive(request);
+    Packet req = Packet.fromBytes(request.getData());
+    
+    if (req.getType() == 2) {  // SYN packet
+        InetAddress clientAddress = req.getPeerAddress();
+        int clientPort = req.getPeerPort();
+        // Process connection request...
+    }
+    ```
+  </Step>
+  
+  <Step title="Create Client Handler">
+    For each new client, create a dedicated socket and handler thread
+    
+    ```java Server/ServerTcpProtocl.java
+    DatagramSocket datasocket;
+    if (socketMapping.containsKey(clientAddress)) {
+        datasocket = socketMapping.get(clientAddress);
+    } else {
+        datasocket = new DatagramSocket();  // Random port
+        socketMapping.put(clientAddress, datasocket);
+        
+        if (verbose) {
+            System.out.println("Client handler created for " + clientAddress);
+        }
+        
+        // Start dedicated handler thread
+        new Thread(new clientHandler(datasocket, clientAddress)).start();
+    }
+    ```
+  </Step>
+  
+  <Step title="Send SYN-ACK">
+    Respond with SYN-ACK containing the dedicated port number
+    
+    ```java Server/ServerTcpProtocl.java
+    Packet p = new Packet(
+        3,  // SYN-ACK type
+        req.getSequenceNumber(),
+        clientAddress,
+        clientPort,
+        Integer.toString(datasocket.getLocalPort()).getBytes()  // Port number in payload
+    );
+    DatagramPacket response = new DatagramPacket(
+        p.toBytes(), 
+        p.toBytes().length, 
+        request.getAddress(),  // Router address
+        request.getPort()       // Router port
+    );
+    this.connectionSocket.send(response);
+    ```
+  </Step>
+  
+  <Step title="Wait for ACK">
+    Wait for final ACK (type=1) with timeout
+    
+    ```java Server/ServerTcpProtocl.java
+    TimeoutBlock timeoutBlock = new TimeoutBlock(20);  // 20ms timeout
+    Runnable block = new Runnable() {
+        @Override
+        public void run() {
+            while (true) {
+                connectionSocket.receive(request);
+                Packet req2 = Packet.fromBytes(request.getData());
+                
+                if (req2.getType() == 1 &&  // ACK
+                    req2.getPeerAddress().equals(clientAddress) &&
+                    req2.getPeerPort() == clientPort) {
+                    break;  // Handshake complete
+                }
+            }
+        }
+    };
+    timeoutBlock.addBlock(block);
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Each client gets a dedicated UDP socket and handler thread, allowing concurrent connections while maintaining isolation between clients.
+</Note>
+
+## Client Handler
+
+The `clientHandler` inner class processes requests for a single client connection.
+
+### Handler Lifecycle
+
+<Tabs>
+  <Tab title="Request Reception">
+    The handler receives the request using Selective Repeat protocol:
+    
+    ```java Server/ServerTcpProtocl.java
+    @Override
+    public void run() {
+        DatagramPacket req = new DatagramPacket(new byte[1024], 1024);
+        
+        // Wait for first packet with total packet count
+        socket.receive(req);
+        Packet p = Packet.fromBytes(req.getData());
+        
+        if (p.getSequenceNumber() == 1 && p.getType() == 0) {
+            String total = new String(p.getPayload());
+            
+            // Send ACK for packet count
+            Packet ack = new Packet(1, 1L, p.getPeerAddress(), p.getPeerPort(), new byte[0]);
+            DatagramPacket ackP = new DatagramPacket(
+                ack.toBytes(), 
+                ack.toBytes().length, 
+                req.getAddress(), 
+                req.getPort()
+            );
+            socket.send(ackP);
+            
+            // Receive all request packets
+            request = getRequestFromPacket(socket, Integer.parseInt(total.trim()));
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Request Processing">
+    Process HTTP request and generate response:
+    
+    ```java Server/ServerTcpProtocl.java
+    String httpResponse = "";
+    String[] words = request.split(" ");
+    
+    if (words[0].equals("GET")) {
+        httpResponse = HttpcLib.getResponse(request, directory, verbose);
+    } else if (words[0].equals("POST")) {
+        httpResponse = HttpcLib.postResponse(request, directory, verbose);
+    }
+    
+    if (verbose) {
+        System.out.println("Handler " + client + ": Response Created");
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Response Transmission">
+    Send response back to client using reliable protocol:
+    
+    ```java Server/ServerTcpProtocl.java
+    requestresponse(
+        socket,
+        new InetSocketAddress(p.getPeerAddress(), p.getPeerPort()),  // Client address
+        new InetSocketAddress(req.getAddress(), req.getPort()),      // Router address
+        httpResponse
+    );
+    
+    System.out.println("Handler " + client + ": Response Sent\n");
+    
+    // Clean up: remove client from connection map
+    socketMapping.remove(client);
+    ```
+  </Tab>
+</Tabs>
+
+### Receiving Packets (Selective Repeat)
+
+The `getRequestFromPacket` method implements the receiver side of Selective Repeat:
+
+```java Server/ServerTcpProtocl.java
+public String getRequestFromPacket(DatagramSocket socket, int totalPackets) {
+    int expseqNum = 2;        // Expected sequence number (starting after packet count)
+    int maxWindow = 100;       // Maximum window size
+    HashMap<Integer, byte[]> data = new HashMap<>();  // Buffer for out-of-order packets
+    
+    while (expseqNum <= totalPackets) {
+        DatagramPacket req = new DatagramPacket(new byte[1024], 1024);
+        socket.receive(req);
+        Packet p = Packet.fromBytes(req.getData());
+        int pSeq = (int) p.getSequenceNumber();
+        
+        if (pSeq <= maxWindow) {  // Within window
+            if (pSeq == expseqNum) {
+                // In-order packet
+                data.put(expseqNum, p.getPayload());
+                
+                // Check for consecutive packets in buffer
+                for (int i = expseqNum; i <= totalPackets; i++) {
+                    if (data.containsKey(i)) {
+                        expseqNum++;
+                        maxWindow++;
+                    } else {
+                        // Send cumulative ACK
+                        Packet ack = new Packet(1, i-1, clientAddress, clientPort, new byte[0]);
+                        socket.send(new DatagramPacket(ack.toBytes(), ack.toBytes().length, 
+                                                       rAddress, rPort));
+                        break;
+                    }
+                }
+            } 
+            else if (pSeq > expseqNum) {
+                // Out-of-order packet (future packet)
+                data.put(pSeq, p.getPayload());
+                
+                // Send NACK for missing packets
+                for (int i = expseqNum; i < pSeq; i++) {
+                    if (!data.containsKey(i)) {
+                        Packet nack = new Packet(4, i, clientAddress, clientPort, new byte[0]);
+                        socket.send(new DatagramPacket(nack.toBytes(), nack.toBytes().length,
+                                                       rAddress, rPort));
+                    }
+                }
+            }
+            else if (pSeq < expseqNum) {
+                // Duplicate packet (already received)
+                Packet ack = new Packet(1, pSeq, clientAddress, clientPort, new byte[0]);
+                socket.send(new DatagramPacket(ack.toBytes(), ack.toBytes().length,
+                                               rAddress, rPort));
+            }
+        }
+    }
+    
+    // Reassemble data from chunks
+    byte[] reqArr = new byte[(totalPackets - 1) * 1013];
+    int k = 0;
+    for (int i = 2; i <= totalPackets; i++) {
+        byte[] tmp = data.get(i);
+        for (int j = 0; j < tmp.length; j++) {
+            reqArr[k++] = tmp[j];
+        }
+    }
+    
+    return new String(reqArr).trim();
+}
+```
+
+<Warning>
+  The receiver only accepts packets within the current window (expseqNum to maxWindow). Packets outside this range are silently discarded.
+</Warning>
+
+### Sending Response Packets
+
+The `requestresponse` and `sendreq` methods handle response transmission:
+
+<CodeGroup>
+```java Chunk and Send
+public static void requestresponse(DatagramSocket socket, 
+                                   InetSocketAddress serverAddr,
+                                   InetSocketAddress routerAddr, 
+                                   String data) throws IOException {
+    byte[] datab = data.getBytes();
+    
+    // Split into 1013-byte chunks
+    final int sizeMB = 1013;
+    List<byte[]> chunks = IntStream.iterate(0, i -> i + sizeMB)
+        .limit((datab.length + sizeMB - 1) / sizeMB)
+        .mapToObj(i -> Arrays.copyOfRange(datab, i, Math.min(i + sizeMB, datab.length)))
+        .collect(Collectors.toList());
+    
+    // Send packet count
+    int nofpackets = chunks.size();
+    Packet p = new Packet.Builder()
+        .setType(0)
+        .setSequenceNumber(1L)
+        .setPortNumber(serverAddr.getPort())
+        .setPeerAddress(serverAddr.getAddress())
+        .setPayload(Integer.toString(nofpackets + 1).getBytes())
+        .create();
+    socket.send(size);
+    
+    // Wait for ACK with timeout and retransmission
+    socket.setSoTimeout(30);
+    while (true) {
+        try {
+            socket.receive(ack);
+            Packet ackpacket = Packet.fromBytes(ack.getData());
+            if (ackpacket.getType() == 1 && ackpacket.getSequenceNumber() == 1) {
+                break;
+            }
+        } catch (SocketTimeoutException s) {
+            socket.send(size);  // Retransmit
+        }
+    }
+    
+    socket.setSoTimeout(0);
+    sendreq(nofpackets, serverAddr, routerAddr, socket, chunks);
+}
+```
+
+```java Sliding Window
+public static void sendreq(int nofpackets, 
+                          InetSocketAddress serverAddr,
+                          InetSocketAddress routerAddr,
+                          DatagramSocket socket, 
+                          List<byte[]> chunks) throws IOException {
+    windowRec = 100;
+    lastackRec = 0;
+    packets = new ArrayList<>();
+    
+    // Create all packets
+    for (int i = 2; i <= nofpackets + 1; i++) {
+        Packet cp = new Packet.Builder()
+            .setType(0)
+            .setSequenceNumber(i)
+            .setPortNumber(serverAddr.getPort())
+            .setPeerAddress(serverAddr.getAddress())
+            .setPayload(chunks.get(i - 2))
+            .create();
+        packets.add(i - 2, new DatagramPacket(cp.toBytes(), cp.toBytes().length,
+                                               routerAddr.getAddress(), routerAddr.getPort()));
+    }
+    
+    // Send initial window
+    int tobesent = Math.min(nofpackets, windowRec);
+    for (int i = 2; i <= tobesent + 1; i++) {
+        socket.send(packets.get(i - 2));
+        Thread t = new Thread(new Timer(i, socket, 0));
+        t.start();
+    }
+    
+    // Process ACKs and NACKs
+    while (lastackRec < nofpackets + 1) {
+        socket.receive(ack);
+        Packet ackpacket = Packet.fromBytes(ack.getData());
+        
+        if (ackpacket.getType() == 1) {  // ACK
+            int newacs = (int) ackpacket.getSequenceNumber() - lastackRec + 1;
+            
+            // Send new packets to fill window
+            if (packets.size() > windowRec) {
+                for (int i = windowRec; i < windowRec + newacs; i++) {
+                    if (packets.size() > i) {
+                        socket.send(packets.get(i));
+                        Thread t = new Thread(new Timer(i + 2, socket, 0));
+                        t.start();
+                    }
+                }
+            }
+            
+            windowRec = windowRec + newacs;
+            lastackRec = (int) ackpacket.getSequenceNumber();
+        }
+        
+        if (ackpacket.getType() == 4) {  // NACK
+            // Selective retransmission
+            socket.send(packets.get((int) ackpacket.getSequenceNumber() - 2));
+            Thread t = new Thread(new Timer((int) ackpacket.getSequenceNumber(), socket, 0));
+            t.start();
+        }
+    }
+}
+```
+</CodeGroup>
+
+## HttpcLib Class
+
+The `HttpcLib` class processes HTTP requests and generates responses.
+
+### GET Request Processing
+
+<Tabs>
+  <Tab title="Query Parameters">
+    Handle GET requests with query parameters:
+    
+    ```java Server/HttpcLib.java
+    if (path.startsWith("/get?")) {
+        path = path.substring(5);  // Remove "/get?"
+        String[] var = path.split("&");
+        
+        for (int i = 0; i < var.length; i++) {
+            data = data + var[i] + "\n";
+        }
+        
+        status = "OK";
+        code = "200";
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Directory Listing">
+    List directory contents when path is "/":
+    
+    ```java Server/HttpcLib.java
+    if (path.equals("/")) {
+        File f = new File(dir);
+        String[] l = f.list();
+        
+        for (String name : l) {
+            data = data + name + System.lineSeparator();
+        }
+        
+        status = "OK";
+        code = "200";
+    }
+    ```
+  </Tab>
+  
+  <Tab title="File Retrieval">
+    Read and return file contents with path validation:
+    
+    ```java Server/HttpcLib.java
+    boolean check = new File(dir, path).exists();
+    if (!check) {
+        throw new Exception("nf");  // Not found
+    }
+    
+    // Security: prevent directory traversal attacks
+    boolean isPathGood = checkPath(path, dir);
+    if (isPathGood) {
+        String d = Files.readString(Paths.get(dir + path));
+        data = data + d + System.lineSeparator();
+        status = "OK";
+        code = "200";
+    } else {
+        throw new Exception("nf");
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Security: Path Validation
+
+The `checkPath` method prevents directory traversal attacks:
+
+```java Server/HttpcLib.java
+static boolean checkPath(String path, String dir) throws IOException {
+    File f = new File(String.valueOf(Paths.get(dir + path)));
+    String c = f.getCanonicalPath();  // Resolve .. and symlinks
+    
+    File f1 = new File(dir);
+    String d = f1.getCanonicalPath();
+    
+    // Ensure requested path is within server directory
+    if (c.startsWith(d)) {
+        return true;
+    } else {
+        return false;  // Block access outside root directory
+    }
+}
+```
+
+<Warning>
+  This security check prevents clients from accessing files outside the server's root directory using paths like `/../../../etc/passwd`.
+</Warning>
+
+### POST Request Processing
+
+<CodeGroup>
+```java Parse Request
+static String postResponse(String req, String directory, boolean verbose) {
+    String data = "", status, code;
+    
+    BufferedReader reader = new BufferedReader(new StringReader(req));
+    
+    // Parse header line to get filename
+    String header = reader.readLine();
+    String filename = header.split(" ")[1];
+    
+    // Skip headers until empty line
+    while (header.length() > 0) {
+        header = reader.readLine();
+    }
+    
+    // Read body
+    String bodyLine = reader.readLine();
+    while (bodyLine != null) {
+        data = data + bodyLine.trim() + "\n";
+        bodyLine = reader.readLine();
+    }
+    data = data.trim();
+}
+```
+
+```java Handle Cases
+if (filename.equals("/")) {
+    status = "BAD REQUEST";
+    code = "400";
+    data = "Filename Not Specified";
+} 
+else if (filename.equals("/post")) {
+    // Echo back the data without saving
+    status = "OK";
+    code = "200";
+}
+else {
+    // Write data to file
+    Files.write(
+        Path.of(directory, filename), 
+        data.getBytes(StandardCharsets.UTF_8)
+    );
+    status = "OK";
+    code = "200";
+}
+```
+</CodeGroup>
+
+### HTTP Response Format
+
+Both GET and POST responses follow the same format:
+
+```java Server/HttpcLib.java
+String headers = "Httfc/1.0 " + code + " " + status + System.lineSeparator() +
+                 "Date :" + java.time.LocalDate.now() + System.lineSeparator() +
+                 "Server : Httpfc/1.0.0" + System.lineSeparator() +
+                 "Content-Length: " + data.length() + System.lineSeparator() +
+                 "Connection: Closed" + System.lineSeparator() +
+                 "Content-type: Application/text";
+
+return headers + "\n\n" + data;
+```
+
+## Error Handling
+
+<CardGroup cols={2}>
+  <Card title="404 Not Found" icon="file-slash">
+    Returned when requested file doesn't exist or path validation fails
+    
+    ```java
+    status = "File not found";
+    code = "404";
+    ```
+  </Card>
+  
+  <Card title="400 Bad Request" icon="circle-xmark">
+    Returned when POST request doesn't specify filename
+    
+    ```java
+    status = "BAD REQUEST";
+    code = "400";
+    ```
+  </Card>
+  
+  <Card title="500 Internal Server Error" icon="server">
+    Returned on unexpected errors during request processing
+    
+    ```java
+    status = "INTERNAL SERVER ERROR";
+    code = "500";
+    ```
+  </Card>
+  
+  <Card title="504 Gateway Timeout" icon="clock">
+    Returned on general GET request errors
+    
+    ```java
+    status = "Internal Server Error";
+    code = "504";
+    ```
+  </Card>
+</CardGroup>
+
+## Configuration Parameters
+
+<ParamField path="port" type="int" default="8000">
+  The UDP port number to listen on for incoming connections
+</ParamField>
+
+<ParamField path="directory" type="String" default=".">
+  Root directory for file operations. Files outside this directory cannot be accessed.
+</ParamField>
+
+<ParamField path="verbose" type="boolean" default="false">
+  Enable detailed logging of connection handling and packet transmission
+</ParamField>
+
+<ParamField path="windowRec" type="int" default="100">
+  Sliding window size for receiving and sending packets
+</ParamField>
+
+<ParamField path="chunkSize" type="int" default="1013">
+  Maximum payload size per packet in bytes
+</ParamField>
+
+<ParamField path="timeout" type="int" default="30ms">
+  Socket timeout for waiting for acknowledgments
+</ParamField>
+
+## Concurrency Model
+
+The server uses a thread-per-client model:
+
+```
+┌─────────────────────────────────────────┐
+│  Main Thread (handShake)                │
+│  - Listen on port 8000                  │
+│  - Accept SYN packets                   │
+│  - Create client handlers               │
+└────────┬────────────────────────────────┘
+         │
+         ├─────> Client Handler Thread 1 (192.168.1.10)
+         │       - Dedicated socket (random port)
+         │       - Receive request
+         │       - Process HTTP
+         │       - Send response
+         │
+         ├─────> Client Handler Thread 2 (192.168.1.11)
+         │       - Independent socket
+         │       - Concurrent execution
+         │
+         └─────> Client Handler Thread N
+```
+
+<Note>
+  Each client gets an isolated socket and thread, preventing interference between concurrent connections. The main thread continues accepting new connections while handlers process existing ones.
+</Note>
+
+## Usage Example
+
+```java Server/ServerTcpProtocl.java
+public static void main(String[] args) throws IOException {
+    ServerTcpProtocl server = new ServerTcpProtocl(
+        8000,       // Listen on port 8000
+        "./data",   // Serve files from ./data directory
+        true        // Enable verbose logging
+    );
+    // Server runs indefinitely, handling client connections
+}
+```

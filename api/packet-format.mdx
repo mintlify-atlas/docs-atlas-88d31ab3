@@ -1,0 +1,463 @@
+---
+title: 'Packet Class'
+description: 'Network packet structure and builder pattern for the Selective Repeat UDP protocol'
+---
+
+## Overview
+
+The `Packet` class represents a simulated network packet used in the Selective Repeat protocol. It provides immutable packet objects with a builder pattern for construction and methods for serialization/deserialization.
+
+## Packet Structure
+
+Each packet consists of the following fields:
+
+<ResponseField name="type" type="int" required>
+  Packet type identifier:
+  - `0`: Data packet
+  - `1`: ACK (Acknowledgment)
+  - `2`: SYN (Connection request)
+  - `3`: SYN-ACK (Connection acknowledgment)
+  - `4`: NACK (Negative acknowledgment)
+  - `6`: Connection close
+</ResponseField>
+
+<ResponseField name="sequenceNumber" type="long" required>
+  Packet sequence number for ordering and acknowledgment (unsigned 32-bit)
+</ResponseField>
+
+<ResponseField name="peerAddress" type="InetAddress" required>
+  IPv4 address of the destination peer (4 bytes)
+</ResponseField>
+
+<ResponseField name="peerPort" type="int" required>
+  Destination port number (unsigned 16-bit)
+</ResponseField>
+
+<ResponseField name="payload" type="byte[]" required>
+  Packet payload data (0-1024 bytes)
+</ResponseField>
+
+## Constants
+
+```java
+public static final int MIN_LEN = 11;        // Minimum packet size (header only)
+public static final int MAX_LEN = 11 + 1024; // Maximum packet size (header + payload)
+```
+
+<Info>
+Packet header is 11 bytes: 1 (type) + 4 (sequence) + 4 (address) + 2 (port) = 11 bytes
+</Info>
+
+## Constructor
+
+### Packet()
+
+Creates a new packet instance.
+
+<ParamField path="type" type="int" required>
+  Packet type (0-6)
+</ParamField>
+
+<ParamField path="sequenceNumber" type="long" required>
+  Sequence number
+</ParamField>
+
+<ParamField path="peerAddress" type="InetAddress" required>
+  Destination IP address
+</ParamField>
+
+<ParamField path="peerPort" type="int" required>
+  Destination port
+</ParamField>
+
+<ParamField path="payload" type="byte[]" required>
+  Payload data
+</ParamField>
+
+```java
+Packet packet = new Packet(
+    0,                                          // Data packet
+    42L,                                        // Sequence number
+    InetAddress.getByName("192.168.1.100"),   // Peer address
+    8000,                                       // Peer port
+    "Hello World".getBytes()                   // Payload
+);
+```
+
+<Warning>
+Direct constructor usage is discouraged. Use the `Builder` pattern instead for better readability and flexibility.
+</Warning>
+
+## Getter Methods
+
+### getType()
+
+<ResponseField name="type" type="int">
+  Returns the packet type
+</ResponseField>
+
+### getSequenceNumber()
+
+<ResponseField name="sequenceNumber" type="long">
+  Returns the sequence number
+</ResponseField>
+
+### getPeerAddress()
+
+<ResponseField name="peerAddress" type="InetAddress">
+  Returns the destination IP address
+</ResponseField>
+
+### getPeerPort()
+
+<ResponseField name="peerPort" type="int">
+  Returns the destination port number
+</ResponseField>
+
+### getPayload()
+
+<ResponseField name="payload" type="byte[]">
+  Returns the payload data as a byte array
+</ResponseField>
+
+## Builder Pattern
+
+### Packet.Builder
+
+Provides a fluent API for constructing packets.
+
+```java
+Packet packet = new Packet.Builder()
+    .setType(0)
+    .setSequenceNumber(1L)
+    .setPortNumber(8000)
+    .setPeerAddress(InetAddress.getByName("127.0.0.1"))
+    .setPayload("Request data".getBytes())
+    .create();
+```
+
+### Builder Methods
+
+<AccordionGroup>
+  <Accordion title="setType()" icon="hashtag">
+    <ParamField path="type" type="int" required>
+      Sets the packet type
+    </ParamField>
+    
+    <ResponseField name="builder" type="Builder">
+      Returns the builder instance for chaining
+    </ResponseField>
+    
+    ```java
+    builder.setType(1)  // ACK packet
+    ```
+  </Accordion>
+
+  <Accordion title="setSequenceNumber()" icon="list-ol">
+    <ParamField path="sequenceNumber" type="long" required>
+      Sets the sequence number
+    </ParamField>
+    
+    <ResponseField name="builder" type="Builder">
+      Returns the builder instance for chaining
+    </ResponseField>
+    
+    ```java
+    builder.setSequenceNumber(42L)
+    ```
+  </Accordion>
+
+  <Accordion title="setPeerAddress()" icon="location-dot">
+    <ParamField path="peerAddress" type="InetAddress" required>
+      Sets the destination IP address
+    </ParamField>
+    
+    <ResponseField name="builder" type="Builder">
+      Returns the builder instance for chaining
+    </ResponseField>
+    
+    ```java
+    builder.setPeerAddress(InetAddress.getByName("192.168.1.100"))
+    ```
+  </Accordion>
+
+  <Accordion title="setPortNumber()" icon="plug">
+    <ParamField path="portNumber" type="int" required>
+      Sets the destination port number
+    </ParamField>
+    
+    <ResponseField name="builder" type="Builder">
+      Returns the builder instance for chaining
+    </ResponseField>
+    
+    ```java
+    builder.setPortNumber(8000)
+    ```
+  </Accordion>
+
+  <Accordion title="setPayload()" icon="box-archive">
+    <ParamField path="payload" type="byte[]" required>
+      Sets the payload data
+    </ParamField>
+    
+    <ResponseField name="builder" type="Builder">
+      Returns the builder instance for chaining
+    </ResponseField>
+    
+    ```java
+    builder.setPayload("Data".getBytes())
+    ```
+  </Accordion>
+
+  <Accordion title="create()" icon="hammer">
+    Constructs and returns the final Packet object.
+    
+    <ResponseField name="packet" type="Packet">
+      The constructed packet instance
+    </ResponseField>
+    
+    ```java
+    Packet packet = builder.create();
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### toBuilder()
+
+Creates a builder from an existing packet for modification.
+
+<ResponseField name="builder" type="Builder">
+  A new builder initialized with the current packet's values
+</ResponseField>
+
+```java
+Packet original = new Packet.Builder()
+    .setType(0)
+    .setSequenceNumber(1L)
+    .setPortNumber(8000)
+    .setPeerAddress(InetAddress.getByName("127.0.0.1"))
+    .setPayload("Data".getBytes())
+    .create();
+
+// Create modified version
+Packet ack = original.toBuilder()
+    .setType(1)              // Change to ACK
+    .setPayload(new byte[0]) // Empty payload
+    .create();
+```
+
+## Serialization
+
+### toBytes()
+
+Converts the packet to a byte array for network transmission.
+
+<ResponseField name="bytes" type="byte[]">
+  Raw byte representation of the packet in BigEndian format
+</ResponseField>
+
+```java
+Packet packet = new Packet.Builder()
+    .setType(0)
+    .setSequenceNumber(1L)
+    .setPeerAddress(InetAddress.getByName("127.0.0.1"))
+    .setPortNumber(8000)
+    .setPayload("Hello".getBytes())
+    .create();
+
+byte[] data = packet.toBytes();
+DatagramPacket dgram = new DatagramPacket(
+    data, 
+    data.length, 
+    routerAddress, 
+    routerPort
+);
+socket.send(dgram);
+```
+
+### toBuffer()
+
+Converts the packet to a ByteBuffer in BigEndian format.
+
+<ResponseField name="buffer" type="ByteBuffer">
+  ByteBuffer flipped and ready for reading
+</ResponseField>
+
+```java
+ByteBuffer buffer = packet.toBuffer();
+```
+
+## Deserialization
+
+### fromBytes()
+
+Creates a packet from a byte array.
+
+<ParamField path="bytes" type="byte[]" required>
+  Raw packet data received from network
+</ParamField>
+
+<ResponseField name="packet" type="Packet">
+  Reconstructed packet object
+</ResponseField>
+
+```java
+DatagramPacket dgram = new DatagramPacket(new byte[1024], 1024);
+socket.receive(dgram);
+
+Packet packet = Packet.fromBytes(dgram.getData());
+System.out.println("Received sequence: " + packet.getSequenceNumber());
+```
+
+<Warning>
+Throws `IOException` if the data length is invalid (not between MIN_LEN and MAX_LEN).
+</Warning>
+
+### fromBuffer()
+
+Creates a packet from a ByteBuffer.
+
+<ParamField path="buf" type="ByteBuffer" required>
+  ByteBuffer containing packet data in BigEndian format
+</ParamField>
+
+<ResponseField name="packet" type="Packet">
+  Reconstructed packet object
+</ResponseField>
+
+```java
+ByteBuffer buffer = ByteBuffer.allocate(MAX_LEN)
+    .order(ByteOrder.BIG_ENDIAN);
+buffer.put(receivedData);
+buffer.flip();
+
+Packet packet = Packet.fromBuffer(buffer);
+```
+
+## Byte Format
+
+Packets are encoded in BigEndian byte order:
+
+```
+Byte Layout:
+┌─────────────────────────────────────────────────────────┐
+│ Type (1)  │ Seq (4)   │ IP (4)    │ Port (2) │ Payload  │
+│  byte     │   int     │  4 bytes  │  short   │ 0-1024   │
+└─────────────────────────────────────────────────────────┘
+  0         1           5           9          11         MAX
+```
+
+<Tip>
+All multi-byte fields use BigEndian (network byte order) encoding.
+</Tip>
+
+## String Representation
+
+### toString()
+
+Returns a human-readable string representation.
+
+<ResponseField name="string" type="String">
+  Formatted string with sequence number, peer address, port, and payload size
+</ResponseField>
+
+```java
+System.out.println(packet.toString());
+// Output: #42 peer=192.168.1.100:8000, size=5
+```
+
+## Packet Type Reference
+
+<CardGroup cols={3}>
+  <Card title="Data (0)" icon="database">
+    Regular data packet containing payload
+  </Card>
+  
+  <Card title="ACK (1)" icon="check">
+    Acknowledgment of received packet
+  </Card>
+  
+  <Card title="SYN (2)" icon="handshake">
+    Connection initiation request
+  </Card>
+  
+  <Card title="SYN-ACK (3)" icon="handshake-angle">
+    Connection acknowledgment
+  </Card>
+  
+  <Card title="NACK (4)" icon="xmark">
+    Negative acknowledgment
+  </Card>
+  
+  <Card title="CLOSE (6)" icon="door-closed">
+    Connection termination
+  </Card>
+</CardGroup>
+
+## Example Usage
+
+<CodeGroup>
+
+```java Creating a data packet
+Packet dataPacket = new Packet.Builder()
+    .setType(0)
+    .setSequenceNumber(1L)
+    .setPeerAddress(InetAddress.getByName("127.0.0.1"))
+    .setPortNumber(8000)
+    .setPayload("Request data".getBytes())
+    .create();
+
+byte[] bytes = dataPacket.toBytes();
+```
+
+```java Creating an ACK packet
+Packet ackPacket = new Packet.Builder()
+    .setType(1)
+    .setSequenceNumber(receivedPacket.getSequenceNumber())
+    .setPeerAddress(receivedPacket.getPeerAddress())
+    .setPortNumber(receivedPacket.getPeerPort())
+    .setPayload(new byte[0])
+    .create();
+```
+
+```java Connection handshake packets
+// SYN
+Packet syn = new Packet.Builder()
+    .setType(2)
+    .setSequenceNumber(1L)
+    .setPeerAddress(serverAddr)
+    .setPortNumber(serverPort)
+    .setPayload("1".getBytes())
+    .create();
+
+// SYN-ACK (server response)
+Packet synAck = new Packet.Builder()
+    .setType(3)
+    .setSequenceNumber(1L)
+    .setPeerAddress(clientAddr)
+    .setPortNumber(clientPort)
+    .setPayload(String.valueOf(dataPort).getBytes())
+    .create();
+
+// ACK
+Packet ack = new Packet.Builder()
+    .setType(1)
+    .setSequenceNumber(1L)
+    .setPeerAddress(serverAddr)
+    .setPortNumber(dataPort)
+    .setPayload("11".getBytes())
+    .create();
+```
+
+</CodeGroup>
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="ReliableClientProtocol" icon="computer" href="/api/client-protocol">
+    Client-side protocol using packets
+  </Card>
+  <Card title="ServerTcpProtocl" icon="server" href="/api/server-protocol">
+    Server-side protocol using packets
+  </Card>
+</CardGroup>

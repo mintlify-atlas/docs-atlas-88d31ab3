@@ -1,0 +1,552 @@
+---
+title: 'Router Component'
+description: 'Go-based UDP packet router with configurable packet loss and delay simulation'
+---
+
+The router is a Go-based network simulator that acts as an intermediary between clients and servers, forwarding UDP packets while simulating realistic network conditions like packet loss and variable delays.
+
+## Overview
+
+The router enables testing of the Selective Repeat protocol under adverse network conditions by introducing controlled packet loss and delays.
+
+<CardGroup cols={3}>
+  <Card title="Packet Forwarding" icon="arrow-right-arrow-left">
+    Routes packets between client and server using peer address information
+  </Card>
+  <Card title="Loss Simulation" icon="burst">
+    Randomly drops packets based on configurable drop rate
+  </Card>
+  <Card title="Delay Simulation" icon="clock">
+    Introduces variable delays to simulate network latency and jitter
+  </Card>
+</CardGroup>
+
+## Architecture
+
+```
+Client (Port 5000)                Router (Port 3000)               Server (Port 8000)
+      │                                 │                                 │
+      │  Packet (ToAddr=Server:8000)    │                                 │
+      ├────────────────────────────────>│                                 │
+      │                                 │  Transform: ToAddr → FromAddr   │
+      │                                 │  Packet (FromAddr=Client:5000)  │
+      │                                 ├────────────────────────────────>│
+      │                                 │                                 │
+      │                                 │  Packet (ToAddr=Client:5000)    │
+      │                                 │<────────────────────────────────┤
+      │  Packet (FromAddr=Server:8000)  │                                 │
+      │<────────────────────────────────┤                                 │
+```
+
+<Note>
+  The router performs address translation: the `ToAddr` field in incoming packets becomes the `FromAddr` in outgoing packets, allowing bidirectional communication.
+</Note>
+
+## Packet Structure
+
+The router parses and forwards packets with the following structure:
+
+```go router.go
+type Packet struct {
+    Type     uint8        // Packet type (1 byte)
+    SeqNum   uint32       // Sequence number (4 bytes, BigEndian)
+    ToAddr   *net.UDPAddr // Destination: 4 bytes IP + 2 bytes port (BigEndian)
+    FromAddr *net.UDPAddr // Source (inferred, not in wire format)
+    Payload  []byte       // Packet payload (variable length)
+}
+```
+
+### Wire Format
+
+```
++--------+----------------+----------------+-----------+-----------+
+| Type   | SeqNum         | ToAddr IP      | ToAddr    | Payload   |
+|        |                |                | Port      |           |
+| 1 byte | 4 bytes        | 4 bytes        | 2 bytes   | variable  |
++--------+----------------+----------------+-----------+-----------+
+                          
+                          All multi-byte values in BigEndian
+```
+
+<CodeGroup>
+```go Serialization (Raw)
+func (p Packet) Raw() []byte {
+    var buf bytes.Buffer
+    append := func(data interface{}) {
+        binary.Write(&buf, binary.BigEndian, data)
+    }
+    
+    append(p.Type)
+    append(p.SeqNum)
+    
+    // Swap ToAddr -> FromAddr and use IPv4
+    append(p.FromAddr.IP.To4())
+    append(uint16(p.FromAddr.Port))
+    
+    append(p.Payload)
+    return buf.Bytes()
+}
+```
+
+```go Deserialization (parsePacket)
+func parsePacket(fromAddr *net.UDPAddr, data []byte) (*Packet, error) {
+    if len(data) < minLen {
+        return nil, fmt.Errorf("packet is too short: %d bytes", len(data))
+    }
+    if len(data) > maxLen {
+        return nil, fmt.Errorf("packet is exceeded max length: %d bytes", len(data))
+    }
+    
+    curr := 0
+    next := func(n int) []byte {
+        bs := data[curr : curr+n]
+        curr += n
+        return bs
+    }
+    
+    u16, u32 := binary.BigEndian.Uint16, binary.BigEndian.Uint32
+    p := Packet{}
+    p.Type = next(1)[0]
+    p.SeqNum = u32(next(4))
+    p.FromAddr = fromAddr
+    
+    // Parse destination address
+    toAddr, err := net.ResolveUDPAddr(
+        "udp", 
+        fmt.Sprintf("%s:%d", net.IP(next(4)), u16(next(2)))
+    )
+    
+    // Handle loopback addresses
+    if toAddr.IP.IsLoopback() {
+        toAddr.IP = fromAddr.IP
+    }
+    
+    p.ToAddr = toAddr
+    p.Payload = data[curr:]
+    return &p, err
+}
+```
+</CodeGroup>
+
+## Core Functions
+
+### Packet Processing Pipeline
+
+<Steps>
+  <Step title="Receive">
+    The main loop receives UDP packets from any source
+    
+    ```go router.go
+    for {
+        buf := make([]byte, 2048)
+        n, fromAddr, err := conn.ReadFromUDP(buf)
+        if err != nil {
+            logger.Println("failed to receive message:", err)
+            continue
+        }
+        
+        p, err := parsePacket(fromAddr, buf[:n])
+        if err != nil {
+            logger.Println("invalid packet:", err)
+            continue
+        }
+        
+        process(conn, *p)
+    }
+    ```
+  </Step>
+  
+  <Step title="Process">
+    Apply loss and delay simulation
+    
+    ```go router.go
+    func process(conn *net.UDPConn, p Packet) {
+        // Random packet loss
+        if rand.Float64() < *dropRate {
+            logger.Printf("[queue=%d] packet %s is dropped\n", currQueue(), p)
+            return
+        }
+        
+        incrQueue()
+        
+        // Zero or negative maxDelay: send immediately (maintain order)
+        if *maxDelay <= 0 {
+            send(conn, p)
+            return
+        }
+        
+        // Random delay: 0 to maxDelay
+        delay := time.Duration(rand.Intn(100)) * *maxDelay / time.Duration(100)
+        logger.Printf("[queue=%d] packet %s is delayed for %s\n", 
+                      currQueue(), p, delay)
+        
+        time.AfterFunc(delay, func() {
+            send(conn, p)
+        })
+    }
+    ```
+  </Step>
+  
+  <Step title="Send">
+    Forward packet to destination
+    
+    ```go router.go
+    func send(conn *net.UDPConn, p Packet) {
+        decrQueue()
+        if _, err := conn.WriteToUDP(p.Raw(), p.ToAddr); err != nil {
+            logger.Printf("failed to deliver %s: %v\n", p, err)
+            return
+        }
+        logger.Printf("[queue=%d] packet %s is delivered\n", currQueue(), p)
+    }
+    ```
+  </Step>
+</Steps>
+
+## Configuration Options
+
+<ParamField path="--port" type="int" default="3000">
+  UDP port number for the router to listen on
+  
+  ```bash
+  router --port=3000
+  ```
+</ParamField>
+
+<ParamField path="--drop-rate" type="float" default="0.0">
+  Probability (0.0 to 1.0) that any packet will be dropped. Use 0.0 to disable packet loss.
+  
+  ```bash
+  router --drop-rate=0.2  # Drop 20% of packets
+  ```
+  
+  <Warning>
+    High drop rates (>0.3) can severely impact performance and may cause connection failures if retransmission limits are reached.
+  </Warning>
+</ParamField>
+
+<ParamField path="--max-delay" type="duration" default="0">
+  Maximum delay duration for any packet. Each packet is delayed by a random duration between 0 and this value. Use `0` or negative value to route packets immediately without delay (preserves packet ordering).
+  
+  ```bash
+  router --max-delay=10ms   # Delay up to 10 milliseconds
+  router --max-delay=1s     # Delay up to 1 second
+  ```
+  
+  <Note>
+    When `max-delay` is 0, packets are delivered immediately without scheduling, which guarantees in-order delivery.
+  </Note>
+</ParamField>
+
+<ParamField path="--seed" type="int64" default="current timestamp">
+  Seed for the random number generator. Using the same seed produces repeatable behavior for testing.
+  
+  ```bash
+  router --seed=12345  # Reproducible random behavior
+  ```
+</ParamField>
+
+## Queue Management
+
+The router tracks the number of packets in flight using atomic operations:
+
+```go router.go
+var (
+    queueSize = int32(0)
+    incrQueue = func() int32 { return atomic.AddInt32(&queueSize, 1) }
+    decrQueue = func() int32 { return atomic.AddInt32(&queueSize, -1) }
+    currQueue = func() int32 { return atomic.LoadInt32(&queueSize) }
+)
+```
+
+This queue size is logged with each packet operation:
+
+```
+[queue=0] packet #1 192.168.1.10:5000 -> 192.168.1.20:8000 is delayed for 5ms
+[queue=1] packet #2 192.168.1.10:5000 -> 192.168.1.20:8000 is delayed for 3ms
+[queue=1] packet #2 192.168.1.10:5000 -> 192.168.1.20:8000 is delivered
+[queue=0] packet #1 192.168.1.10:5000 -> 192.168.1.20:8000 is delivered
+```
+
+<Note>
+  The queue counter helps identify potential bottlenecks or excessive queuing during high-throughput scenarios.
+</Note>
+
+## Logging
+
+The router logs all operations to both console and `router.log` file:
+
+```go router.go
+func init() {
+    logf, err := os.OpenFile("router.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0660)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "failed to open log file: %v", err)
+        panic(err)
+    }
+    logger = log.New(
+        io.MultiWriter(logf, os.Stderr), 
+        "", 
+        log.Ltime|log.Lmicroseconds
+    )
+}
+```
+
+### Log Format
+
+```
+15:04:05.000000 config: drop-rate=0.10, max-delay=10ms, seed=1234567890
+15:04:05.000001 router is listening at :3000
+15:04:10.123456 [queue=0] packet #1 127.0.0.1:54321 -> 127.0.0.1:8000 is delayed for 7ms
+15:04:10.130456 [queue=0] packet #1 127.0.0.1:54321 -> 127.0.0.1:8000 is delivered
+15:04:10.234567 [queue=0] packet #2 127.0.0.1:8000 -> 127.0.0.1:54321 is dropped
+```
+
+## Usage Examples
+
+<Tabs>
+  <Tab title="No Network Impairment">
+    Perfect network conditions (testing protocol correctness):
+    
+    ```bash
+    router --port=3000 --drop-rate=0 --max-delay=0
+    ```
+    
+    Output:
+    ```
+    config: drop-rate=0.00, max-delay=0s, seed=1709478234
+    router is listening at :3000
+    [queue=0] packet #1 is delivered
+    [queue=0] packet #2 is delivered
+    ```
+  </Tab>
+  
+  <Tab title="Moderate Loss">
+    10% packet loss with 10ms maximum delay:
+    
+    ```bash
+    router --port=3000 --drop-rate=0.1 --max-delay=10ms
+    ```
+    
+    Output:
+    ```
+    config: drop-rate=0.10, max-delay=10ms, seed=1709478345
+    router is listening at :3000
+    [queue=0] packet #1 is delayed for 7ms
+    [queue=1] packet #2 is dropped
+    [queue=1] packet #3 is delayed for 3ms
+    [queue=1] packet #3 is delivered
+    [queue=0] packet #1 is delivered
+    ```
+  </Tab>
+  
+  <Tab title="High Loss + Latency">
+    Extreme conditions (30% loss, 100ms delay):
+    
+    ```bash
+    router --port=3000 --drop-rate=0.3 --max-delay=100ms --seed=42
+    ```
+    
+    <Warning>
+      Extreme conditions may cause frequent retransmissions and reduced throughput. Use for stress testing only.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Reproducible Testing">
+    Fixed seed for consistent test results:
+    
+    ```bash
+    router --port=3000 --drop-rate=0.15 --max-delay=20ms --seed=123456
+    ```
+    
+    Running with the same seed produces identical packet loss and delay patterns.
+  </Tab>
+</Tabs>
+
+## Address Translation
+
+The router performs bidirectional address translation:
+
+### Client → Server
+
+```
+Incoming (from client):                   Outgoing (to server):
+┌─────────────────────┐                  ┌─────────────────────┐
+│ Type: 0 (DATA)      │                  │ Type: 0 (DATA)      │
+│ SeqNum: 5           │                  │ SeqNum: 5           │
+│ ToAddr: 10.0.0.2:8000│  ────────────>  │ FromAddr: 10.0.0.1:5000│
+│ Payload: "hello"    │                  │ Payload: "hello"    │
+└─────────────────────┘                  └─────────────────────┘
+  Received from                            Sent to
+  10.0.0.1:5000                           10.0.0.2:8000
+```
+
+### Server → Client
+
+```
+Incoming (from server):                   Outgoing (to client):
+┌─────────────────────┐                  ┌─────────────────────┐
+│ Type: 1 (ACK)       │                  │ Type: 1 (ACK)       │
+│ SeqNum: 5           │                  │ SeqNum: 5           │
+│ ToAddr: 10.0.0.1:5000│  ────────────>  │ FromAddr: 10.0.0.2:8000│
+│ Payload: empty      │                  │ Payload: empty      │
+└─────────────────────┘                  └─────────────────────┘
+  Received from                            Sent to
+  10.0.0.2:8000                           10.0.0.1:5000
+```
+
+<Note>
+  The `ToAddr` field in the incoming packet becomes the destination for forwarding, while the `FromAddr` in the outgoing packet is set to the source of the incoming packet. This allows both endpoints to communicate without knowing each other's addresses directly.
+</Note>
+
+## Packet Size Constraints
+
+```go router.go
+const (
+    minLen = 11       // Minimum: 1 + 4 + 4 + 2 = 11 bytes
+    maxLen = 1024     // Maximum: 11 + 1013 bytes payload
+)
+```
+
+<CardGroup cols={2}>
+  <Card title="Minimum Size: 11 bytes" icon="arrow-down">
+    - Type: 1 byte
+    - Sequence: 4 bytes
+    - Address: 4 bytes
+    - Port: 2 bytes
+    - Payload: 0 bytes (e.g., ACK packets)
+  </Card>
+  
+  <Card title="Maximum Size: 1024 bytes" icon="arrow-up">
+    - Header: 11 bytes
+    - Payload: up to 1013 bytes
+    
+    Packets exceeding this size are rejected.
+  </Card>
+</CardGroup>
+
+## Deployment
+
+The router is compiled for multiple platforms:
+
+<Tabs>
+  <Tab title="Linux">
+    ```bash
+    # 64-bit
+    ./Router/linux/router_x64 --port=3000 --drop-rate=0.1 --max-delay=10ms
+    
+    # 32-bit
+    ./Router/linux/router_x86 --port=3000 --drop-rate=0.1 --max-delay=10ms
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    ./Router/macos/router --port=3000 --drop-rate=0.1 --max-delay=10ms
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    ```powershell
+    # 64-bit
+    .\Router\windows\router_x64.exe --port=3000 --drop-rate=0.1 --max-delay=10ms
+    
+    # 32-bit
+    .\Router\windows\router_x86.exe --port=3000 --drop-rate=0.1 --max-delay=10ms
+    ```
+  </Tab>
+  
+  <Tab title="Build from Source">
+    ```bash
+    cd Router/source
+    go build -o router router.go
+    ./router --port=3000
+    ```
+  </Tab>
+</Tabs>
+
+## Testing Scenarios
+
+<AccordionGroup>
+  <Accordion title="Scenario 1: Protocol Correctness">
+    **Goal:** Verify Selective Repeat implementation works correctly
+    
+    ```bash
+    router --port=3000 --drop-rate=0 --max-delay=0
+    ```
+    
+    **Expected:** All packets delivered in order, no retransmissions
+  </Accordion>
+  
+  <Accordion title="Scenario 2: Loss Recovery">
+    **Goal:** Test retransmission and NACK handling
+    
+    ```bash
+    router --port=3000 --drop-rate=0.2 --max-delay=5ms --seed=100
+    ```
+    
+    **Expected:** Lost packets detected and retransmitted, all data eventually delivered
+  </Accordion>
+  
+  <Accordion title="Scenario 3: Out-of-Order Delivery">
+    **Goal:** Verify selective repeat buffers out-of-order packets correctly
+    
+    ```bash
+    router --port=3000 --drop-rate=0 --max-delay=50ms
+    ```
+    
+    **Expected:** Variable delays cause packets to arrive out of order, receiver buffers and reorders them
+  </Accordion>
+  
+  <Accordion title="Scenario 4: High Latency">
+    **Goal:** Test protocol under high delay conditions
+    
+    ```bash
+    router --port=3000 --drop-rate=0.05 --max-delay=200ms
+    ```
+    
+    **Expected:** Timeouts may trigger unnecessary retransmissions, but data integrity maintained
+  </Accordion>
+  
+  <Accordion title="Scenario 5: Extreme Stress Test">
+    **Goal:** Push protocol to limits
+    
+    ```bash
+    router --port=3000 --drop-rate=0.4 --max-delay=100ms
+    ```
+    
+    **Expected:** Heavy retransmissions, possible connection failures if retry limit reached
+  </Accordion>
+</AccordionGroup>
+
+## Performance Characteristics
+
+<CardGroup cols={2}>
+  <Card title="Throughput Impact" icon="gauge-high">
+    - No delay: Maximum throughput (limited by sliding window)
+    - With delay: Throughput reduced by average delay × packet rate
+    - Packet loss: Throughput = ideal × (1 - dropRate)
+  </Card>
+  
+  <Card title="Latency Impact" icon="timer">
+    - Zero delay: ~1-2ms forwarding overhead
+    - Max delay: Average added latency = maxDelay / 2
+    - Retransmissions: Additional round-trip time per lost packet
+  </Card>
+</CardGroup>
+
+## Command Reference
+
+```bash
+router --port int --drop-rate float --max-delay duration --seed int
+
+Options:
+  --port         Port number to listen on (default: 3000)
+  --drop-rate    Packet drop probability 0.0-1.0 (default: 0.0)
+  --max-delay    Maximum packet delay, e.g., 5ms, 1s (default: 0)
+  --seed         Random number generator seed (default: current time)
+
+Examples:
+  router --port=3000
+  router --port=3000 --drop-rate=0.2 --max-delay=10ms
+  router --port=3000 --drop-rate=0.1 --max-delay=20ms --seed=12345
+```

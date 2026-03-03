@@ -1,0 +1,417 @@
+---
+title: Client Usage (httpc)
+description: Complete guide to using the httpc HTTP client with examples and command-line options
+---
+
+The `httpc` client is a curl-like HTTP client that supports GET and POST requests using the Selective Repeat UDP protocol.
+
+## Getting Started
+
+<Steps>
+  <Step title="Start the Router">
+    Before using the client, ensure the router is running:
+
+    ```bash
+    ./router --port 3000
+    ```
+  </Step>
+
+  <Step title="Run the Client">
+    Launch the client application:
+
+    ```bash
+    cd Client
+    mvn exec:java -Dexec.mainClass="client.CLient"
+    ```
+
+    You'll see a prompt: `Enter your command..`
+  </Step>
+
+  <Step title="Execute Commands">
+    Enter httpc commands at the prompt. See examples below.
+  </Step>
+</Steps>
+
+## Command Structure
+
+The basic syntax for httpc commands is:
+
+```bash
+httpc command [options] URL
+```
+
+<Note>All commands must start with `httpc`. The URL must include the port number used by your server.</Note>
+
+## Help Command
+
+Get help information about available commands:
+
+<CodeGroup>
+
+```bash General Help
+httpc help
+```
+
+```bash GET Help
+httpc help get
+```
+
+```bash POST Help
+httpc help post
+```
+
+</CodeGroup>
+
+### Help Output
+
+<Tabs>
+  <Tab title="General">
+    ```
+    httpc is a curl-like application but supports HTTP protocol only.
+    Usage:
+        httpc command [arguments]
+    The commands are:
+        get     executes a HTTP GET request and prints the response.
+        post    executes a HTTP POST request and prints the response.
+        help    prints this screen.
+
+    Use "httpc help [command]" for more information about a command.
+    ```
+  </Tab>
+  
+  <Tab title="GET">
+    ```
+    usage: httpc get [-v] [-h key:value] URL
+
+    Get executes a HTTP GET request for a given URL.
+
+        -v    Prints the detail of the response such as protocol, status, and headers.
+        -h key:value    Associates headers to HTTP Request with the format 'key:value'.
+    ```
+  </Tab>
+  
+  <Tab title="POST">
+    ```
+    usage: httpc post [-v] [-h key:value] [-d inline-data] [-f file] URL
+
+    Post executes a HTTP POST request for a given URL with inline data or from file.
+
+        -v    Prints the detail of the response such as protocol, status, and headers.
+        -h key:value    Associates headers to HTTP Request with the format 'key:value'.
+        -d string    Associates an inline data to the body HTTP POST request.
+        -f file    Associates the content of a file to the body HTTP POST request
+
+    Either [-d] or [-f] can be used but not both.
+    ```
+  </Tab>
+</Tabs>
+
+## GET Requests
+
+Perform HTTP GET requests to retrieve data from the server.
+
+### Basic GET Request
+
+```bash
+httpc get http://localhost:8080/get
+```
+
+<Note>The URL path `/get` is a common endpoint for testing GET requests.</Note>
+
+### GET with Query Parameters
+
+Query parameters are automatically appended to the `/get` path:
+
+```bash
+httpc get http://localhost:8080/get?name=John&age=30
+```
+
+### Verbose Mode
+
+Use the `-v` flag to see detailed response information including headers:
+
+```bash
+httpc get -v http://localhost:8080/get
+```
+
+<Tip>Verbose mode shows the HTTP protocol version, status code, and all response headers.</Tip>
+
+### GET with Custom Headers
+
+Add custom headers using the `-h` flag:
+
+```bash
+httpc get -h Authorization:Bearer-token123 http://localhost:8080/get
+```
+
+### Multiple Headers
+
+Include multiple headers by repeating the `-h` flag:
+
+```bash
+httpc get -h Content-Type:application/json -h Accept:application/json http://localhost:8080/get
+```
+
+### Complete GET Example
+
+```bash
+httpc get -v -h User-Agent:httpc/1.0 -h Accept:application/json http://localhost:8080/get?query=test
+```
+
+## POST Requests
+
+Send data to the server using HTTP POST requests.
+
+### POST with Inline Data
+
+Use the `-d` flag to send inline data:
+
+```bash
+httpc post -d '{"name":"John","age":30}' http://localhost:8080/post
+```
+
+<Warning>The client automatically adds a `Content-Length` header based on the data size.</Warning>
+
+### POST with Data from File
+
+Use the `-f` flag to read data from a file:
+
+```bash
+httpc post -f data.json http://localhost:8080/post
+```
+
+<Note>Either `-d` or `-f` can be used, but not both simultaneously.</Note>
+
+### POST with Headers
+
+Add custom headers to POST requests:
+
+```bash
+httpc post -h Content-Type:application/json -d '{"key":"value"}' http://localhost:8080/post
+```
+
+### Verbose POST
+
+See detailed response information:
+
+```bash
+httpc post -v -d 'test data' http://localhost:8080/post
+```
+
+### Complete POST Example
+
+```bash
+httpc post -v -h Content-Type:application/json -h Authorization:Bearer-xyz -d '{"message":"Hello World"}' http://localhost:8080/post
+```
+
+## Output Options
+
+### Write Response to File
+
+Use the `-o` flag to save the response to a file:
+
+<CodeGroup>
+
+```bash GET to File
+httpc get -o output.txt http://localhost:8080/get
+```
+
+```bash POST to File
+httpc post -d '{"data":"test"}' -o response.json http://localhost:8080/post
+```
+
+</CodeGroup>
+
+<Tip>This is useful for saving large responses or when you need to process the output later.</Tip>
+
+### Console Output
+
+By default, responses are printed to the console. Without verbose mode, only the response body is shown:
+
+```bash
+httpc get http://localhost:8080/get
+```
+
+With verbose mode, headers and status are included:
+
+```bash
+httpc get -v http://localhost:8080/get
+```
+
+## Command Options Reference
+
+<ParamField path="-v, --verbose" type="flag">
+  Prints detailed response information including protocol, status, and headers.
+</ParamField>
+
+<ParamField path="-h, --header" type="string">
+  Associates headers to the HTTP request in the format `key:value`. Can be used multiple times.
+</ParamField>
+
+<ParamField path="-d, --data" type="string">
+  Associates inline data to the HTTP POST request body. Cannot be used with `-f`.
+</ParamField>
+
+<ParamField path="-f, --file" type="string">
+  Reads data from a file for the HTTP POST request body. Cannot be used with `-d`.
+</ParamField>
+
+<ParamField path="-o, --writeinfile" type="string">
+  Writes the response to the specified file instead of printing to console.
+</ParamField>
+
+## Connection Flow
+
+When you execute a command, the client:
+
+<Steps>
+  <Step title="Establishes Connection">
+    The client connects to the server through the router using a three-way handshake.
+
+    ```
+    Connecting to server
+    ```
+  </Step>
+
+  <Step title="Sends Request">
+    Once connected, the request is sent using the Selective Repeat protocol.
+
+    ```
+    Connection established, sending request
+    ```
+  </Step>
+
+  <Step title="Receives Response">
+    The client receives the response packets and reassembles them.
+
+    ```
+    Received Response
+    ```
+  </Step>
+
+  <Step title="Displays Output">
+    The response is parsed and displayed according to the specified options.
+  </Step>
+</Steps>
+
+## Real-World Examples
+
+<Tabs>
+  <Tab title="API Testing">
+    Test a JSON API endpoint:
+
+    ```bash
+    httpc get -v -h Content-Type:application/json -h Accept:application/json http://localhost:8080/get?id=123
+    ```
+  </Tab>
+  
+  <Tab title="File Upload">
+    Upload a JSON file:
+
+    ```bash
+    httpc post -h Content-Type:application/json -f payload.json http://localhost:8080/post
+    ```
+  </Tab>
+  
+  <Tab title="Authentication">
+    Make an authenticated request:
+
+    ```bash
+    httpc get -h Authorization:Bearer-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 http://localhost:8080/get
+    ```
+  </Tab>
+  
+  <Tab title="Debug Mode">
+    Debug a failing request:
+
+    ```bash
+    httpc post -v -h Content-Type:application/json -d '{"debug":true}' http://localhost:8080/post
+    ```
+  </Tab>
+</Tabs>
+
+## Interactive Mode
+
+The client runs in interactive mode, allowing multiple requests:
+
+```bash
+mvn exec:java -Dexec.mainClass="client.CLient"
+```
+
+```
+Enter your command..
+httpc get http://localhost:8080/get
+[Response displayed]
+do you want to continue?
+yes
+Enter your command..
+httpc post -d 'test' http://localhost:8080/post
+[Response displayed]
+do you want to continue?
+no
+```
+
+<Tip>Type "yes" to continue making requests or "no" to exit the client.</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection timeout">
+    Ensure the router and server are running:
+
+    ```bash
+    # Terminal 1: Start router
+    ./router --port 3000
+
+    # Terminal 2: Start server
+    cd Server
+    mvn exec:java -Dexec.mainClass="Server.ServerCommand"
+    httpfs -p 8080
+    ```
+  </Accordion>
+
+  <Accordion title="Invalid URL error">
+    Make sure your URL includes the protocol and port:
+
+    ```bash
+    # Correct
+    httpc get http://localhost:8080/get
+
+    # Incorrect
+    httpc get localhost/get
+    ```
+  </Accordion>
+
+  <Accordion title="File not found error">
+    When using `-f`, ensure the file path is correct:
+
+    ```bash
+    # Use absolute or relative path
+    httpc post -f ./data.json http://localhost:8080/post
+    httpc post -f /home/user/data.json http://localhost:8080/post
+    ```
+  </Accordion>
+
+  <Accordion title="Headers not working">
+    Use the correct format for headers (no spaces around colon):
+
+    ```bash
+    # Correct
+    httpc get -h Content-Type:application/json http://localhost:8080/get
+
+    # Incorrect
+    httpc get -h Content-Type: application/json http://localhost:8080/get
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Server Setup" icon="server" href="/guides/server-setup">
+    Learn how to set up the httpfs server
+  </Card>
+  <Card title="Router Configuration" icon="network-wired" href="/guides/router-configuration">
+    Configure network conditions for testing
+  </Card>
+</CardGroup>

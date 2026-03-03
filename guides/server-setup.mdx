@@ -1,0 +1,505 @@
+---
+title: Server Setup (httpfs)
+description: Configure and run the httpfs file server with UDP-based Selective Repeat protocol
+---
+
+The `httpfs` server is a simple HTTP file server that serves files from a directory using the Selective Repeat UDP protocol for reliable data transfer.
+
+## Quick Start
+
+<Steps>
+  <Step title="Start the Router">
+    The router must be running before starting the server:
+
+    ```bash
+    ./router --port 3000
+    ```
+  </Step>
+
+  <Step title="Launch the Server">
+    ```bash
+    cd Server
+    mvn exec:java -Dexec.mainClass="Server.ServerCommand"
+    ```
+  </Step>
+
+  <Step title="Enter Server Command">
+    When prompted, enter the server command:
+
+    ```bash
+    httpfs -v -p 8080 -d /path/to/files
+    ```
+
+    You'll see: `Waiting for connection request`
+  </Step>
+
+  <Step title="Test the Server">
+    In another terminal, use the httpc client to test:
+
+    ```bash
+    httpc get http://localhost:8080/get
+    ```
+  </Step>
+</Steps>
+
+## Server Command Syntax
+
+The httpfs server accepts the following command format:
+
+```bash
+httpfs [options]
+```
+
+<ParamField path="-v, --verbose" type="flag">
+  Enables verbose logging to show detailed information about connections, requests, and responses.
+</ParamField>
+
+<ParamField path="-p, --port" type="integer" default="8080">
+  Specifies the port number on which the server listens for incoming connections.
+</ParamField>
+
+<ParamField path="-d, --directory" type="string" default=".">
+  Sets the root directory from which files are served. Defaults to the current directory.
+</ParamField>
+
+## Basic Configuration
+
+### Default Configuration
+
+Run the server with default settings (port 8080, current directory):
+
+```bash
+httpfs
+```
+
+<Note>This starts the server on port 8080 serving files from the current directory without verbose logging.</Note>
+
+### Custom Port
+
+Specify a different port:
+
+```bash
+httpfs -p 3000
+```
+
+### Custom Directory
+
+Serve files from a specific directory:
+
+```bash
+httpfs -d /var/www/files
+```
+
+### Verbose Mode
+
+Enable detailed logging for debugging:
+
+```bash
+httpfs -v
+```
+
+### Complete Configuration
+
+Combine all options:
+
+```bash
+httpfs -v -p 8080 -d /home/user/public
+```
+
+## Server Behavior
+
+### Connection Handling
+
+The server uses a multi-threaded architecture to handle multiple clients:
+
+<Steps>
+  <Step title="Wait for Connection">
+    The server listens on the specified port for SYN packets:
+
+    ```
+    Waiting for connection request
+    ```
+  </Step>
+
+  <Step title="Three-Way Handshake">
+    When a client connects, the server performs a three-way handshake:
+    - Receives SYN from client
+    - Sends SYN-ACK to client
+    - Waits for ACK from client
+  </Step>
+
+  <Step title="Create Client Handler">
+    A dedicated handler thread is created for each unique client:
+
+    ```
+    Client handler created for client with address /192.168.1.100
+    ```
+  </Step>
+
+  <Step title="Process Requests">
+    The handler receives and processes requests from the client.
+  </Step>
+</Steps>
+
+### Request Processing
+
+The server handles HTTP requests through the Selective Repeat protocol:
+
+<Tabs>
+  <Tab title="Receive Packets">
+    ```
+    handler /192.168.1.100: waiting for packets from client /192.168.1.100
+    handler /192.168.1.100: waiting for the request
+    ```
+
+    The server receives data packets and sends acknowledgments using:
+    - **ACK packets**: For successfully received in-order packets
+    - **NACK packets**: For missing packets (triggers retransmission)
+  </Tab>
+  
+  <Tab title="Process Request">
+    ```
+    Handler /192.168.1.100: Received all request packets
+    Handler /192.168.1.100: request received
+    ```
+
+    The server parses the HTTP request and determines the appropriate action (GET or POST).
+  </Tab>
+  
+  <Tab title="Generate Response">
+    ```
+    Handler /192.168.1.100: Response Created
+    Handler /192.168.1.100: Sending the Response
+    ```
+
+    The response is generated and sent back to the client in packets.
+  </Tab>
+  
+  <Tab title="Complete">
+    ```
+    handler /192.168.1.100: starting to send the packets of response
+    handler /192.168.1.100: Waiting for acks of all packets
+    Handler /192.168.1.100: Acks Received
+    handler /192.168.1.100: Packets of response Sent
+    Handler /192.168.1.100: Response Sent
+    ```
+
+    The handler waits for acknowledgments and completes the transaction.
+  </Tab>
+</Tabs>
+
+## Selective Repeat Protocol
+
+The server implements Selective Repeat with the following parameters:
+
+<CodeGroup>
+
+```java Window Size
+// Maximum number of unacknowledged packets
+private static int windowRec = 100;
+```
+
+```java Packet Size
+// Maximum payload size per packet
+final int sizeMB = 1013;
+```
+
+```java Timeout
+// Socket timeout for acknowledgments
+socket.setSoTimeout(30);
+```
+
+```java Retries
+// Maximum retransmission attempts
+if(retries >= 10) {
+    // Stop retrying
+}
+```
+
+</CodeGroup>
+
+<Info>The window size of 100 packets allows the server to send up to 100 KB of data before requiring acknowledgments.</Info>
+
+## File Operations
+
+### GET Requests
+
+The server handles GET requests to retrieve files or directory listings:
+
+```bash
+# From client
+httpc get http://localhost:8080/get?file=test.txt
+```
+
+The server's `HttpcLib.getResponse()` method processes the request.
+
+### POST Requests
+
+POST requests can create or update files:
+
+```bash
+# From client
+httpc post -d 'file content' http://localhost:8080/post
+```
+
+The server's `HttpcLib.postResponse()` method handles the data.
+
+## Logging and Monitoring
+
+### Verbose Output
+
+When verbose mode is enabled (`-v`), the server logs detailed information:
+
+<CodeGroup>
+
+```log Connection Events
+Waiting for connection request
+Client handler created for client with address /192.168.1.100
+```
+
+```log Request Processing
+handler /192.168.1.100: waiting for packets from client /192.168.1.100
+handler /192.168.1.100: waiting for the request packets
+handler /192.168.1.100: Received all request packets
+handler /192.168.1.100: request received
+```
+
+```log Response Handling
+Handler /192.168.1.100: Response Created
+Handler /192.168.1.100: Sending the Response
+handler /192.168.1.100: starting to send the packets of response
+handler /192.168.1.100: Waiting for acks of all packets
+Handler /192.168.1.100: Acks Received
+handler /192.168.1.100: Packets of response Sent
+Handler /192.168.1.100: Response Sent
+```
+
+```log Errors
+handler /192.168.1.100: Some error incurred
+```
+
+</CodeGroup>
+
+<Tip>Enable verbose mode during development and debugging to understand the server's behavior.</Tip>
+
+### Without Verbose Mode
+
+Without the `-v` flag, the server runs quietly and only logs minimal information:
+
+```log
+Handler /192.168.1.100: request received
+Handler /192.168.1.100: Response Sent
+```
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Development">
+    For local development with detailed logging:
+
+    ```bash
+    httpfs -v -p 8080 -d ./public
+    ```
+
+    <Note>Use verbose mode to see all connection and packet details.</Note>
+  </Tab>
+  
+  <Tab title="Testing">
+    For testing with the router simulation:
+
+    ```bash
+    httpfs -v -p 8080 -d ./test-files
+    ```
+
+    Configure the router with packet loss:
+
+    ```bash
+    ./router --port 3000 --drop-rate 0.1 --max-delay 100ms
+    ```
+  </Tab>
+  
+  <Tab title="Production">
+    For production-like environment:
+
+    ```bash
+    httpfs -p 8080 -d /var/www/html
+    ```
+
+    <Warning>Without verbose mode, less information is logged but performance may improve.</Warning>
+  </Tab>
+  
+  <Tab title="Custom Port">
+    When port 8080 is already in use:
+
+    ```bash
+    httpfs -v -p 3001 -d ./files
+    ```
+
+    Remember to update client URLs:
+
+    ```bash
+    httpc get http://localhost:3001/get
+    ```
+  </Tab>
+</Tabs>
+
+## Complete Setup Example
+
+Here's how to set up a complete working environment:
+
+<Steps>
+  <Step title="Terminal 1: Start Router">
+    ```bash
+    cd Router
+    ./router --port 3000 --drop-rate 0.1 --max-delay 50ms
+    ```
+
+    Output:
+    ```
+    config: drop-rate=0.10, max-delay=50ms, seed=1234567890
+    router is listening at :3000
+    ```
+  </Step>
+
+  <Step title="Terminal 2: Start Server">
+    ```bash
+    cd Server
+    mvn exec:java -Dexec.mainClass="Server.ServerCommand"
+    ```
+
+    Enter command:
+    ```bash
+    httpfs -v -p 8080 -d ./files
+    ```
+
+    Output:
+    ```
+    Waiting for connection request
+    ```
+  </Step>
+
+  <Step title="Terminal 3: Test with Client">
+    ```bash
+    cd Client
+    mvn exec:java -Dexec.mainClass="client.CLient"
+    ```
+
+    Enter command:
+    ```bash
+    httpc get -v http://localhost:8080/get
+    ```
+  </Step>
+
+  <Step title="Monitor Logs">
+    In the server terminal, you'll see:
+
+    ```
+    Client handler created for client with address /127.0.0.1
+    handler /127.0.0.1: waiting for packets from client /127.0.0.1
+    handler /127.0.0.1: Received all request packets
+    Handler /127.0.0.1: request received
+    Handler /127.0.0.1: Response Created
+    Handler /127.0.0.1: Sending the Response
+    Handler /127.0.0.1: Response Sent
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    If you see a bind error, the port is already in use:
+
+    ```bash
+    # Check what's using the port
+    lsof -i :8080
+
+    # Use a different port
+    httpfs -p 8081
+    ```
+  </Accordion>
+
+  <Accordion title="Connection timeout">
+    Ensure the router is running before starting the server:
+
+    ```bash
+    # Start router first
+    ./router --port 3000
+
+    # Then start server
+    httpfs -v -p 8080
+    ```
+  </Accordion>
+
+  <Accordion title="Directory not accessible">
+    Make sure the specified directory exists and has proper permissions:
+
+    ```bash
+    # Create directory if needed
+    mkdir -p /path/to/files
+
+    # Check permissions
+    ls -la /path/to/files
+
+    # Set permissions if needed
+    chmod 755 /path/to/files
+    ```
+  </Accordion>
+
+  <Accordion title="Packets not acknowledged">
+    Check router logs for dropped packets:
+
+    ```bash
+    # Router logs are in router.log
+    tail -f router.log
+    ```
+
+    If too many packets are dropped, reduce the drop rate:
+
+    ```bash
+    ./router --port 3000 --drop-rate 0.05
+    ```
+  </Accordion>
+
+  <Accordion title="Handler errors">
+    Enable verbose mode to see detailed handler logs:
+
+    ```bash
+    httpfs -v -p 8080
+    ```
+
+    Look for error messages in the handler output.
+  </Accordion>
+</AccordionGroup>
+
+## Performance Considerations
+
+<CardGroup cols={2}>
+  <Card title="Window Size" icon="window-maximize">
+    The default window size is 100 packets (approximately 100 KB). Larger windows allow faster transfers but require more memory.
+  </Card>
+  
+  <Card title="Timeout Values" icon="clock">
+    Socket timeout is set to 30ms for acknowledgments. Adjust based on network conditions.
+  </Card>
+  
+  <Card title="Retransmission" icon="rotate">
+    Maximum of 10 retries per packet before giving up. This prevents infinite retransmission loops.
+  </Card>
+  
+  <Card title="Packet Size" icon="box">
+    Each packet carries up to 1013 bytes of payload. This is optimized for UDP transmission.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Client Usage" icon="terminal" href="/guides/client-usage">
+    Learn how to make requests to the server
+  </Card>
+  <Card title="Router Configuration" icon="network-wired" href="/guides/router-configuration">
+    Configure network conditions for testing
+  </Card>
+</CardGroup>

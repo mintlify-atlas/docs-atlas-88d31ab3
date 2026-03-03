@@ -1,0 +1,255 @@
+---
+title: Installation & Compilation
+description: Step-by-step instructions to install and compile the Selective Repeat UDP project components
+---
+
+This guide covers the installation and compilation of all three components of the Selective Repeat UDP project: the Router (Go), Client (Java), and Server (Java).
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Java Development" icon="java">
+    - Java 11 or later
+    - Maven for dependency management
+  </Card>
+  <Card title="Go Development" icon="golang">
+    - Go 1.7 or later
+  </Card>
+</CardGroup>
+
+## Router Installation
+
+The router is written in Go and can be used either as a precompiled binary or compiled from source.
+
+<Steps>
+  <Step title="Option 1: Use Precompiled Binary">
+    Precompiled binaries are available for Windows, Linux, and MacOS in the `Router` directory.
+
+    <Tabs>
+      <Tab title="Linux">
+        ```bash
+        cd Router/linux
+        chmod +x router_x64  # or router_x86 for 32-bit systems
+        ./router_x64 --help
+        ```
+      </Tab>
+      <Tab title="MacOS">
+        ```bash
+        cd Router/macos
+        chmod +x router
+        ./router --help
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```powershell
+        cd Router\windows
+        .\router.exe --help
+        ```
+      </Tab>
+    </Tabs>
+
+    <Tip>Using precompiled binaries is the fastest way to get started and requires no additional setup.</Tip>
+  </Step>
+
+  <Step title="Option 2: Compile from Source">
+    If you prefer to build from source or need a custom build:
+
+    ```bash
+    cd Router/source
+    go build router.go
+    ```
+
+    This will create a `router` executable in the current directory.
+
+    <Note>Make sure you have Go 1.7 or later installed. You can verify with `go version`.</Note>
+  </Step>
+
+  <Step title="Verify Installation">
+    Test that the router is working correctly:
+
+    ```bash
+    ./router --help
+    ```
+
+    You should see the router usage information displayed.
+  </Step>
+</Steps>
+
+## Client Installation
+
+The HTTP client (`httpc`) is a Java-based application that requires Maven for building.
+
+<Steps>
+  <Step title="Navigate to Client Directory">
+    ```bash
+    cd Client
+    ```
+  </Step>
+
+  <Step title="Install Dependencies">
+    The client uses the following dependencies:
+    - `jopt-simple` (5.0.2) - for command-line option parsing
+    - `apache-ant` (1.10.12) - for command-line utilities
+
+    ```bash
+    mvn clean install
+    ```
+
+    <Note>Maven will automatically download all required dependencies specified in `pom.xml`.</Note>
+  </Step>
+
+  <Step title="Compile the Client">
+    ```bash
+    mvn compile
+    ```
+
+    This compiles the Java source files and prepares the client for execution.
+  </Step>
+
+  <Step title="Package the Client (Optional)">
+    To create an executable JAR file:
+
+    ```bash
+    mvn package
+    ```
+
+    This creates a JAR file in the `target` directory.
+  </Step>
+
+  <Step title="Verify Installation">
+    Run the client to verify it's working:
+
+    ```bash
+    mvn exec:java -Dexec.mainClass="client.CLient"
+    ```
+
+    You should see a prompt: `Enter your command..`
+
+    <Tip>Try running `httpc help` to see the available commands.</Tip>
+  </Step>
+</Steps>
+
+## Server Installation
+
+The HTTP file server (`httpfs`) is also written in Java and follows a similar build process.
+
+<Steps>
+  <Step title="Navigate to Server Directory">
+    ```bash
+    cd Server
+    ```
+  </Step>
+
+  <Step title="Install Dependencies">
+    The server uses the same dependencies as the client:
+
+    ```bash
+    mvn clean install
+    ```
+  </Step>
+
+  <Step title="Compile the Server">
+    ```bash
+    mvn compile
+    ```
+  </Step>
+
+  <Step title="Package the Server (Optional)">
+    ```bash
+    mvn package
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    Run the server to verify it's working:
+
+    ```bash
+    mvn exec:java -Dexec.mainClass="Server.ServerCommand"
+    ```
+
+    The server will wait for a command. Type:
+
+    ```
+    httpfs -v -p 8080
+    ```
+
+    You should see: `Waiting for connection request`
+  </Step>
+</Steps>
+
+## System Requirements
+
+<CardGroup cols={2}>
+  <Card title="Java Components" icon="memory">
+    - **RAM**: 512MB minimum
+    - **Disk Space**: 100MB for dependencies
+    - **Java Version**: 11 or later
+    - **Maven Version**: 3.6 or later
+  </Card>
+  
+  <Card title="Go Router" icon="server">
+    - **RAM**: 256MB minimum
+    - **Disk Space**: 10MB
+    - **Go Version**: 1.7 or later
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Maven build fails with dependency errors">
+    Try clearing your Maven cache and rebuilding:
+
+    ```bash
+    mvn clean
+    rm -rf ~/.m2/repository
+    mvn install
+    ```
+  </Accordion>
+
+  <Accordion title="Java version incompatibility">
+    Ensure you're using Java 11 or later:
+
+    ```bash
+    java -version
+    ```
+
+    If you have multiple Java versions, set `JAVA_HOME` to point to Java 11+:
+
+    ```bash
+    export JAVA_HOME=/path/to/java11
+    ```
+  </Accordion>
+
+  <Accordion title="Go build fails">
+    Make sure you have Go 1.7 or later installed:
+
+    ```bash
+    go version
+    ```
+
+    If you need to update Go, download the latest version from [golang.org](https://golang.org/dl/).
+  </Accordion>
+
+  <Accordion title="Router binary permission denied">
+    On Linux/MacOS, ensure the router binary has execute permissions:
+
+    ```bash
+    chmod +x router
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Client Usage" icon="terminal" href="/guides/client-usage">
+    Learn how to use the httpc client
+  </Card>
+  <Card title="Server Setup" icon="server" href="/guides/server-setup">
+    Set up and run the file server
+  </Card>
+  <Card title="Router Configuration" icon="network-wired" href="/guides/router-configuration">
+    Configure the router for testing
+  </Card>
+</CardGroup>

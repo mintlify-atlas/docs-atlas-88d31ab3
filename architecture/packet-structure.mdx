@@ -1,0 +1,819 @@
+---
+title: 'Packet Structure'
+description: 'Packet format, header fields, and packet type documentation'
+---
+
+## Packet Format Overview
+
+The protocol uses a fixed-header format with variable-length payload. Each packet consists of an 11-byte header followed by up to 1013 bytes of payload data.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        PACKET STRUCTURE                          │
+├────────┬────────────────┬──────────┬──────────┬──────────────────┤
+│  Type  │ Sequence Number│  Address │   Port   │     Payload      │
+├────────┼────────────────┼──────────┼──────────┼──────────────────┤
+│ 1 byte │    4 bytes     │ 4 bytes  │ 2 bytes  │   0-1013 bytes   │
+└────────┴────────────────┴──────────┴──────────┴──────────────────┘
+    0           1-4           5-8        9-10         11-1024
+```
+
+<Info>
+**Total Packet Size**: Minimum 11 bytes, Maximum 1024 bytes
+- **Header**: 11 bytes (fixed)
+- **Payload**: 0-1013 bytes (variable)
+</Info>
+
+## Header Fields
+
+### 1. Packet Type (1 byte)
+
+**Offset**: 0  
+**Size**: 1 byte (unsigned 8-bit integer)  
+**Byte Order**: N/A (single byte)
+
+Defines the purpose and handling of the packet:
+
+<AccordionGroup>
+  <Accordion title="Type 0: DATA" icon="database">
+    **Value**: `0`
+    
+    **Description**: Carries application data from sender to receiver.
+    
+    **Usage**:
+    - HTTP request/response body
+    - File content
+    - Any application-level payload
+    
+    **Special Case**: The first DATA packet (seq=1) contains the total number of packets as its payload:
+    ```java
+    Packet sizePacket = new Packet.Builder()
+            .setType(0)
+            .setSequenceNumber(1L)
+            .setPayload("150".getBytes())  // Total of 150 packets
+            .create();
+    ```
+    
+    **Subsequent DATA packets** (seq=2, 3, 4, ...) contain actual data chunks.
+  </Accordion>
+  
+  <Accordion title="Type 1: ACK" icon="check">
+    **Value**: `1`
+    
+    **Description**: Positive acknowledgment confirming successful receipt of packets.
+    
+    **Semantics**: **Cumulative ACK**
+    - An ACK with sequence number `N` confirms receipt of all packets from 1 to N (inclusive)
+    - Does not acknowledge individual packets
+    
+    **Example**:
+    ```java
+    // Client receives packets 1, 2, 3, 4, 5
+    // Sends ACK with seq=5 (confirms packets 1-5)
+    Packet ack = new Packet(
+            1,                  // Type: ACK
+            5,                  // Sequence: highest in-order packet
+            serverAddress,
+            serverPort,
+            new byte[0]         // Empty payload
+    );
+    ```
+    
+    **Payload**: Typically empty (0 bytes)
+  </Accordion>
+  
+  <Accordion title="Type 2: SYN" icon="handshake">
+    **Value**: `2`
+    
+    **Description**: Synchronization packet to initiate connection (first step of three-way handshake).
+    
+    **Usage**: Sent by client to server to request connection establishment.
+    
+    **Fields**:
+    - Sequence Number: Always `1`
+    - Address: Server address
+    - Port: Server listening port (typically 8000)
+    - Payload: Arbitrary data (e.g., "1")
+    
+    **Example**:
+    ```java
+    Packet syn = new Packet.Builder()
+            .setType(2)                    // SYN
+            .setSequenceNumber(1L)
+            .setPeerAddress(InetAddress.getByName("192.168.1.10"))
+            .setPortNumber(8000)           // Server's main port
+            .setPayload("1".getBytes())
+            .create();
+    ```
+  </Accordion>
+  
+  <Accordion title="Type 3: SYN-ACK" icon="handshake-angle">
+    **Value**: `3`
+    
+    **Description**: Synchronization-acknowledgment packet (second step of three-way handshake).
+    
+    **Usage**: Sent by server to client to acknowledge SYN and provide handler port.
+    
+    **Fields**:
+    - Sequence Number: Same as received SYN (typically `1`)
+    - Address: Client address
+    - Port: Client port
+    - Payload: **Handler port number** as ASCII string
+    
+    **Example**:
+    ```java
+    // Server creates handler socket on random port 54321
+    DatagramSocket handlerSocket = new DatagramSocket();
+    int handlerPort = handlerSocket.getLocalPort();  // 54321
+    
+    Packet synAck = new Packet(
+            3,                              // SYN-ACK
+            1,                              // Same seq as SYN
+            clientAddress,
+            clientPort,
+            Integer.toString(handlerPort).getBytes()  // "54321"
+    );
+    ```
+    
+    <Warning>
+    **Critical**: The client MUST parse the payload to extract the handler port for all subsequent communication.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Type 4: NACK" icon="xmark">
+    **Value**: `4`
+    
+    **Description**: Negative acknowledgment requesting retransmission of a specific packet.
+    
+    **Semantics**: **Selective NACK**
+    - A NACK with sequence number `N` requests immediate retransmission of packet N only
+    - Does not affect window or other packets
+    
+    **When Sent**:
+    - Receiver gets packet `M` but is expecting packet `N` (where N < M)
+    - Receiver sends NACK(N) to request the missing packet
+    
+    **Example**:
+    ```java
+    // Receiver expects packet 10 but receives packet 15
+    // Sends NACKs for packets 10, 11, 12, 13, 14
+    for (int i = 10; i < 15; i++) {
+        if (!receivedPackets.containsKey(i)) {
+            Packet nack = new Packet(
+                    4,              // Type: NACK
+                    i,              // Missing packet number
+                    senderAddress,
+                    senderPort,
+                    new byte[0]     // Empty payload
+            );
+            socket.send(nack);
+        }
+    }
+    ```
+    
+    **Payload**: Empty (0 bytes)
+  </Accordion>
+  
+  <Accordion title="Type 6: CLOSE" icon="door-closed">
+    **Value**: `6`
+    
+    **Description**: Connection termination signal.
+    
+    **Usage**: Indicates end of data transmission and connection closure.
+    
+    **Fields**:
+    - Sequence Number: Not significant
+    - Address: Peer address
+    - Port: Peer port
+    - Payload: Empty
+    
+    **Example**:
+    ```java
+    // Server sends CLOSE after sending response
+    Packet close = new Packet(
+            6,                  // Type: CLOSE
+            0,                  // Sequence not used
+            clientAddress,
+            clientPort,
+            new byte[0]
+    );
+    socket.send(close);
+    
+    // Client receiving loop
+    Packet p = Packet.fromBytes(data);
+    if (p.getType() == 6) {
+        // Close connection and exit
+        socket.close();
+        return;
+    }
+    ```
+    
+    <Note>
+    The CLOSE packet is mentioned in the code but not fully implemented in the handshake or teardown process.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+### 2. Sequence Number (4 bytes)
+
+**Offset**: 1-4  
+**Size**: 4 bytes (unsigned 32-bit integer)  
+**Byte Order**: Big Endian  
+**Range**: 0 to 4,294,967,295
+
+**Purpose**: Identifies the packet's position in the sequence of transmitted packets.
+
+**Sequence Numbering**:
+- **Packet 1**: Size information (number of total packets)
+- **Packet 2-N**: Actual data packets
+
+**Implementation**:
+
+<CodeGroup>
+```java Java - Writing Sequence Number
+// In Packet.java, line 72
+private void write(ByteBuffer buf) {
+    buf.put((byte) type);
+    buf.putInt((int) sequenceNumber);  // 4 bytes, Big Endian
+    buf.put(peerAddress.getAddress());
+    buf.putShort((short) peerPort);
+    buf.put(payload);
+}
+```
+
+```java Java - Reading Sequence Number
+// In Packet.java, line 110
+public static Packet fromBuffer(ByteBuffer buf) throws IOException {
+    Builder builder = new Builder();
+    builder.setType(Byte.toUnsignedInt(buf.get()));
+    builder.setSequenceNumber(Integer.toUnsignedLong(buf.getInt()));  // Read 4 bytes
+    // ...
+}
+```
+
+```go Go Router - Parsing Sequence Number
+// In router.go, line 83
+u32 := binary.BigEndian.Uint32
+p.SeqNum = u32(next(4))  // Read 4 bytes as Big Endian uint32
+```
+</CodeGroup>
+
+<Warning>
+**Sequence Number Wraparound**: With a 32-bit sequence number, wraparound occurs after 4,294,967,295 packets (~4.3 billion packets). For typical use cases, this is not a concern.
+</Warning>
+
+### 3. Peer Address (4 bytes)
+
+**Offset**: 5-8  
+**Size**: 4 bytes (IPv4 address)  
+**Byte Order**: N/A (4 octets)  
+**Format**: IPv4 dotted-decimal notation
+
+**Purpose**: Specifies the destination IP address of the packet.
+
+**Routing Behavior**:
+- **Sender → Router**: Contains final destination address
+- **Router → Receiver**: Router swaps this with sender's address
+
+**Example**:
+```
+Client (192.168.1.5) sends to Server (192.168.1.10):
+
+┌─────────────────────────────────────────────────────┐
+│ Client constructs packet with address = 192.168.1.10│
+└─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│ Router receives from 192.168.1.5                    │
+│ Swaps address to 192.168.1.5 (sender's address)     │
+│ Forwards to 192.168.1.10                            │
+└─────────────────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│ Server receives packet with address = 192.168.1.5   │
+│ Knows to send responses to 192.168.1.5              │
+└─────────────────────────────────────────────────────┘
+```
+
+**Implementation**:
+
+<CodeGroup>
+```java Java - Encoding Address
+// In Packet.java, line 73
+buf.put(peerAddress.getAddress());  // 4-byte IPv4 address
+```
+
+```java Java - Decoding Address
+// In Packet.java, line 112-113
+byte[] host = new byte[]{buf.get(), buf.get(), buf.get(), buf.get()};
+builder.setPeerAddress(Inet4Address.getByAddress(host));
+```
+
+```go Go Router - Swapping Address
+// In router.go, line 55
+// When sending, use FromAddr instead of ToAddr
+append(p.FromAddr.IP.To4())
+```
+</CodeGroup>
+
+<Info>
+**IPv6 Not Supported**: The protocol only supports IPv4 addresses (4 bytes). IPv6 support would require 16 bytes and protocol modifications.
+</Info>
+
+### 4. Peer Port (2 bytes)
+
+**Offset**: 9-10  
+**Size**: 2 bytes (unsigned 16-bit integer)  
+**Byte Order**: Big Endian  
+**Range**: 0 to 65,535
+
+**Purpose**: Specifies the destination port number.
+
+**Implementation**:
+
+<CodeGroup>
+```java Java - Writing Port
+// In Packet.java, line 74
+buf.putShort((short) peerPort);  // 2 bytes, Big Endian
+```
+
+```java Java - Reading Port
+// In Packet.java, line 114
+builder.setPortNumber(Short.toUnsignedInt(buf.getShort()));
+```
+
+```go Go Router - Parsing Port
+// In router.go, line 83
+u16 := binary.BigEndian.Uint16
+port := u16(next(2))  // 2 bytes
+```
+</CodeGroup>
+
+### 5. Payload (0-1013 bytes)
+
+**Offset**: 11 to end  
+**Size**: Variable (0 to 1013 bytes)  
+**Encoding**: Raw bytes (application-dependent)
+
+**Purpose**: Contains the actual data being transmitted.
+
+**Payload Types by Packet Type**:
+
+| Packet Type | Payload Content | Typical Size |
+|-------------|-----------------|-------------|
+| DATA (seq=1) | Total packet count (ASCII) | 1-10 bytes |
+| DATA (seq>1) | Application data chunk | 1013 bytes |
+| ACK | Empty | 0 bytes |
+| NACK | Empty | 0 bytes |
+| SYN | Arbitrary data | 1-10 bytes |
+| SYN-ACK | Handler port (ASCII) | 4-6 bytes |
+| CLOSE | Empty | 0 bytes |
+
+**Data Fragmentation**:
+
+```java
+// Split large data into 1013-byte chunks
+final int PAYLOAD_SIZE = 1013;
+List<byte[]> chunks = IntStream.iterate(0, i -> i + PAYLOAD_SIZE)
+        .limit((data.length + PAYLOAD_SIZE - 1) / PAYLOAD_SIZE)
+        .mapToObj(i -> Arrays.copyOfRange(data, i, 
+                                          Math.min(i + PAYLOAD_SIZE, data.length)))
+        .collect(Collectors.toList());
+
+// First packet contains count
+int totalPackets = chunks.size() + 1;
+```
+
+<Warning>
+**Maximum Payload Size**: The payload must not exceed 1013 bytes. With the 11-byte header, this ensures the total packet size stays within the 1024-byte limit.
+</Warning>
+
+## Packet Size Constraints
+
+### Size Limits
+
+```java
+public static final int MIN_LEN = 11;      // Header only
+public static final int MAX_LEN = 11 + 1024 = 1035;  // Wait, this is wrong!
+```
+
+<Warning>
+**Code Inconsistency**: The Java code defines `MAX_LEN = 11 + 1024`, but the actual maximum should be 1024 bytes total (11-byte header + 1013-byte payload). This appears to be a bug in the constant definition.
+
+The correct values should be:
+```java
+public static final int MIN_LEN = 11;
+public static final int MAX_LEN = 1024;  // Total packet size
+public static final int MAX_PAYLOAD = 1013;  // MAX_LEN - MIN_LEN
+```
+</Warning>
+
+### Validation
+
+Both Java and Go implementations validate packet size:
+
+<CodeGroup>
+```java Java Validation
+// In Packet.java, line 103-105
+public static Packet fromBuffer(ByteBuffer buf) throws IOException {
+    if (buf.limit() < MIN_LEN || buf.limit() > MAX_LEN) {
+        throw new IOException("Invalid length");
+    }
+    // ...
+}
+```
+
+```go Go Validation
+// In router.go, line 68-73
+func parsePacket(fromAddr *net.UDPAddr, data []byte) (*Packet, error) {
+    if len(data) < minLen {
+        return nil, fmt.Errorf("packet is too short: %d bytes", len(data))
+    }
+    if len(data) > maxLen {
+        return nil, fmt.Errorf("packet is exceeded max length: %d bytes", len(data))
+    }
+    // ...
+}
+```
+</CodeGroup>
+
+## Packet Examples
+
+### Example 1: SYN Packet
+
+```
+Hex Dump:
+02 00 00 00 01 C0 A8 01 0A 1F 40 31
+
+Decoded:
+┌─────────────────────────────────────────────────────┐
+│ Type:          0x02 (SYN)                            │
+│ Sequence:      0x00000001 (1)                        │
+│ Address:       0xC0A8010A (192.168.1.10)             │
+│ Port:          0x1F40 (8000)                         │
+│ Payload:       0x31 ("1")                            │
+└─────────────────────────────────────────────────────┘
+
+Interpretation:
+Client initiating connection to server at 192.168.1.10:8000
+```
+
+### Example 2: SYN-ACK Packet
+
+```
+Hex Dump:
+03 00 00 00 01 C0 A8 01 05 E2 10 35 34 33 32 31
+
+Decoded:
+┌─────────────────────────────────────────────────────┐
+│ Type:          0x03 (SYN-ACK)                        │
+│ Sequence:      0x00000001 (1)                        │
+│ Address:       0xC0A80105 (192.168.1.5)              │
+│ Port:          0xE210 (57872)                        │
+│ Payload:       0x3534333231 ("54321")                │
+└─────────────────────────────────────────────────────┘
+
+Interpretation:
+Server acknowledging connection and assigning handler port 54321
+```
+
+### Example 3: DATA Packet (Size)
+
+```
+Hex Dump:
+00 00 00 00 01 C0 A8 01 0A D4 31 31 35 30
+
+Decoded:
+┌─────────────────────────────────────────────────────┐
+│ Type:          0x00 (DATA)                           │
+│ Sequence:      0x00000001 (1)                        │
+│ Address:       0xC0A8010A (192.168.1.10)             │
+│ Port:          0xD431 (54321)                        │
+│ Payload:       0x313530 ("150")                      │
+└─────────────────────────────────────────────────────┘
+
+Interpretation:
+Sender announcing that 150 total packets will be sent
+```
+
+### Example 4: ACK Packet
+
+```
+Hex Dump:
+01 00 00 00 64 C0 A8 01 05 E2 10
+
+Decoded:
+┌─────────────────────────────────────────────────────┐
+│ Type:          0x01 (ACK)                            │
+│ Sequence:      0x00000064 (100)                      │
+│ Address:       0xC0A80105 (192.168.1.5)              │
+│ Port:          0xE210 (57872)                        │
+│ Payload:       (empty)                               │
+└─────────────────────────────────────────────────────┘
+
+Interpretation:
+Receiver acknowledging receipt of packets 1-100 (cumulative ACK)
+```
+
+### Example 5: NACK Packet
+
+```
+Hex Dump:
+04 00 00 00 2A C0 A8 01 05 E2 10
+
+Decoded:
+┌─────────────────────────────────────────────────────┐
+│ Type:          0x04 (NACK)                           │
+│ Sequence:      0x0000002A (42)                       │
+│ Address:       0xC0A80105 (192.168.1.5)              │
+│ Port:          0xE210 (57872)                        │
+│ Payload:       (empty)                               │
+└─────────────────────────────────────────────────────┘
+
+Interpretation:
+Receiver requesting retransmission of packet 42 (selective NACK)
+```
+
+### Example 6: DATA Packet (Content)
+
+```
+Hex Dump:
+00 00 00 00 02 C0 A8 01 0A D4 31 47 45 54 20 2F ... (1013 more bytes)
+
+Decoded:
+┌─────────────────────────────────────────────────────┐
+│ Type:          0x00 (DATA)                           │
+│ Sequence:      0x00000002 (2)                        │
+│ Address:       0xC0A8010A (192.168.1.10)             │
+│ Port:          0xD431 (54321)                        │
+│ Payload:       "GET / HTTP/1.0\r\n..." (1013 bytes)  │
+└─────────────────────────────────────────────────────┘
+
+Interpretation:
+Second packet containing HTTP request data
+```
+
+## Packet Builder Pattern
+
+The Java implementation uses the Builder pattern for packet construction:
+
+```java
+Packet packet = new Packet.Builder()
+        .setType(0)                          // DATA packet
+        .setSequenceNumber(42L)              // Sequence 42
+        .setPeerAddress(InetAddress.getByName("192.168.1.10"))
+        .setPortNumber(8000)
+        .setPayload("Hello World".getBytes())
+        .create();
+
+// Convert to bytes for transmission
+byte[] rawPacket = packet.toBytes();
+
+// Send via UDP
+DatagramPacket dgram = new DatagramPacket(
+        rawPacket, 
+        rawPacket.length,
+        routerAddress,
+        routerPort
+);
+socket.send(dgram);
+```
+
+## Packet Parsing
+
+### Java Implementation
+
+```java
+// Receive UDP datagram
+DatagramPacket dgram = new DatagramPacket(new byte[1024], 1024);
+socket.receive(dgram);
+
+// Parse packet from bytes
+Packet packet = Packet.fromBytes(dgram.getData());
+
+// Access fields
+int type = packet.getType();
+long seqNum = packet.getSequenceNumber();
+InetAddress address = packet.getPeerAddress();
+int port = packet.getPeerPort();
+byte[] payload = packet.getPayload();
+
+// Handle based on type
+switch (type) {
+    case 0:  // DATA
+        handleData(packet);
+        break;
+    case 1:  // ACK
+        handleAck(packet);
+        break;
+    case 4:  // NACK
+        handleNack(packet);
+        break;
+    // ...
+}
+```
+
+### Go Router Implementation
+
+```go
+// Read from UDP socket
+buf := make([]byte, 2048)
+n, fromAddr, err := conn.ReadFromUDP(buf)
+
+// Parse packet
+p, err := parsePacket(fromAddr, buf[:n])
+if err != nil {
+    logger.Println("invalid packet:", err)
+    return
+}
+
+// Access fields
+logger.Printf("#%d, %s -> %s, sz=%d", 
+              p.SeqNum, p.FromAddr, p.ToAddr, len(p.Payload))
+
+// Forward packet
+process(conn, *p)
+```
+
+## Byte Order (Endianness)
+
+<Warning>
+**Big Endian Required**: All multi-byte fields (sequence number and port) MUST be in Big Endian (network byte order). Mixing endianness will cause parsing failures.
+</Warning>
+
+**Why Big Endian?**
+- Standard network byte order (RFC 1700)
+- Ensures interoperability between different architectures
+- Go and Java both support Big Endian conversion
+
+**Conversion Examples**:
+
+<CodeGroup>
+```java Java - Big Endian
+ByteBuffer buf = ByteBuffer.allocate(1024)
+        .order(ByteOrder.BIG_ENDIAN);  // Set byte order
+
+buf.putInt(12345);      // Writes 0x00003039
+buf.putShort(8000);     // Writes 0x1F40
+```
+
+```go Go - Big Endian
+import "encoding/binary"
+
+buf := make([]byte, 4)
+binary.BigEndian.PutUint32(buf, 12345)  // Writes 0x00003039
+
+seqNum := binary.BigEndian.Uint32(buf)  // Reads as 12345
+```
+</CodeGroup>
+
+## Protocol Constants Reference
+
+```java
+// Packet Types
+public static final int TYPE_DATA = 0;
+public static final int TYPE_ACK = 1;
+public static final int TYPE_SYN = 2;
+public static final int TYPE_SYN_ACK = 3;
+public static final int TYPE_NACK = 4;
+public static final int TYPE_CLOSE = 6;
+
+// Size Constants
+public static final int HEADER_SIZE = 11;
+public static final int MAX_PAYLOAD_SIZE = 1013;
+public static final int MAX_PACKET_SIZE = 1024;
+public static final int MIN_PACKET_SIZE = 11;
+
+// Field Offsets
+public static final int OFFSET_TYPE = 0;
+public static final int OFFSET_SEQUENCE = 1;
+public static final int OFFSET_ADDRESS = 5;
+public static final int OFFSET_PORT = 9;
+public static final int OFFSET_PAYLOAD = 11;
+
+// Field Sizes
+public static final int SIZE_TYPE = 1;
+public static final int SIZE_SEQUENCE = 4;
+public static final int SIZE_ADDRESS = 4;
+public static final int SIZE_PORT = 2;
+```
+
+## Common Pitfalls
+
+<Warning>
+**Common Implementation Errors:**
+
+1. **Wrong Byte Order**: Using Little Endian instead of Big Endian for sequence/port
+2. **Buffer Overflow**: Payload exceeding 1013 bytes causes packet size > 1024
+3. **Sequence Off-by-One**: Forgetting that sequence 1 is the size packet
+4. **Address Confusion**: Not swapping addresses correctly in router
+5. **Payload Encoding**: Not trimming whitespace from size/port payloads
+</Warning>
+
+## Performance Considerations
+
+### Memory Allocation
+
+```java
+// Good: Reuse buffer
+DatagramPacket buffer = new DatagramPacket(new byte[1024], 1024);
+while (true) {
+    socket.receive(buffer);  // Reuses same buffer
+    Packet p = Packet.fromBytes(buffer.getData());
+}
+
+// Bad: Allocate per packet
+while (true) {
+    DatagramPacket buffer = new DatagramPacket(new byte[1024], 1024);  // ❌
+    socket.receive(buffer);
+}
+```
+
+### Packet Copying
+
+```java
+// Efficient: Pre-serialize packets
+for (int i = 0; i < chunks.size(); i++) {
+    Packet p = createPacket(i, chunks.get(i));
+    packets.add(new DatagramPacket(p.toBytes(), ...));  // Serialize once
+}
+
+// Send multiple times without re-serialization
+socket.send(packets.get(5));
+socket.send(packets.get(5));  // Retransmit using same bytes
+```
+
+## Debugging Packet Issues
+
+### Packet Logging
+
+```java
+public void logPacket(Packet p, String direction) {
+    System.out.printf("%s | Type=%d Seq=%d %s:%d Payload=%d bytes\n",
+            direction,
+            p.getType(),
+            p.getSequenceNumber(),
+            p.getPeerAddress().getHostAddress(),
+            p.getPeerPort(),
+            p.getPayload().length);
+}
+
+// Usage
+logPacket(packet, "SEND");
+logPacket(receivedPacket, "RECV");
+```
+
+**Output**:
+```
+SEND | Type=0 Seq=42 192.168.1.10:8000 Payload=1013 bytes
+RECV | Type=1 Seq=42 192.168.1.5:54321 Payload=0 bytes
+```
+
+### Hex Dump Utility
+
+```java
+public static String hexDump(byte[] bytes) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < Math.min(bytes.length, 100); i++) {
+        sb.append(String.format("%02X ", bytes[i]));
+        if ((i + 1) % 16 == 0) sb.append("\n");
+    }
+    return sb.toString();
+}
+
+// Usage
+System.out.println(hexDump(packet.toBytes()));
+```
+
+## Source Code References
+
+<CardGroup cols={2}>
+  <Card title="Packet Class (Java)" icon="code">
+    **File**: `Client/src/main/java/util/Packet.java`
+    
+    - Builder Pattern: Lines 138-173
+    - Serialization: Lines 70-97
+    - Deserialization: Lines 102-131
+  </Card>
+  
+  <Card title="Router Parser (Go)" icon="code">
+    **File**: `Router/source/router.go`
+    
+    - Packet Struct: Lines 29-43
+    - Parsing: Lines 66-93
+    - Address Swapping: Lines 45-60
+  </Card>
+</CardGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture/overview">
+    Learn how packets flow between Client, Server, and Router
+  </Card>
+  <Card title="Selective Repeat Protocol" icon="arrows-rotate" href="/architecture/selective-repeat">
+    Understand how packet types are used in the SR-ARQ protocol
+  </Card>
+</CardGroup>

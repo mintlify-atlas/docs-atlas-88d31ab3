@@ -1,0 +1,328 @@
+---
+title: 'ServerTcpProtocl'
+description: 'Server-side implementation of the Selective Repeat UDP protocol for handling multiple concurrent clients'
+---
+
+## Overview
+
+The `ServerTcpProtocl` class implements the server-side Selective Repeat ARQ protocol over UDP. It handles multiple concurrent client connections, performs three-way handshakes, receives HTTP requests reliably, and sends HTTP responses back to clients.
+
+## Constructor
+
+### ServerTcpProtocl()
+
+Initializes the server and starts listening for client connections.
+
+<ParamField path="port" type="int" required>
+  Port number to listen on for incoming connections
+</ParamField>
+
+<ParamField path="directory" type="String" required>
+  Root directory for serving files
+</ParamField>
+
+<ParamField path="verbose" type="boolean" required>
+  Enable verbose logging output
+</ParamField>
+
+```java
+ServerTcpProtocl server = new ServerTcpProtocl(
+    8000,           // port
+    "./www",        // directory
+    true            // verbose
+);
+```
+
+<Info>
+The constructor automatically calls `handShake()` to begin accepting client connections.
+</Info>
+
+## Connection Handling
+
+### handShake()
+
+Listens for and handles three-way handshake connections from clients.
+
+<Accordion title="Handshake Process" icon="handshake">
+  1. Server receives SYN packet (type=2) from client
+  2. Creates or retrieves a dedicated handler socket for the client
+  3. Sends SYN-ACK (type=3) with the handler's port number
+  4. Waits for ACK (type=1) with 20ms timeout
+  5. Spawns a new thread running `clientHandler` for this client
+</Accordion>
+
+<Warning>
+This method runs in an infinite loop. It should be called only once per server instance.
+</Warning>
+
+## Client Handler
+
+### clientHandler (Inner Class)
+
+Handles communication with a single client in a dedicated thread.
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Dedicated socket for this client
+</ParamField>
+
+<ParamField path="client" type="InetAddress" required>
+  Client's IP address
+</ParamField>
+
+<Accordion title="Request Processing Flow" icon="diagram-project">
+  1. Wait for initial packet containing total packet count
+  2. Send ACK for the count packet
+  3. Receive all data packets using Selective Repeat
+  4. Parse HTTP request (GET or POST)
+  5. Generate HTTP response using `HttpcLib`
+  6. Send response back using Selective Repeat
+  7. Remove client from socket mapping
+</Accordion>
+
+```java
+public class clientHandler implements Runnable {
+    private final DatagramSocket socket;
+    private InetAddress client;
+    
+    public clientHandler(DatagramSocket s, InetAddress c) {
+        socket = s;
+        client = c;
+    }
+    
+    @Override
+    public void run() {
+        // Client handling logic
+    }
+}
+```
+
+## Data Transmission
+
+### requestresponse()
+
+Sends the HTTP response to the client using reliable transmission.
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Socket for sending data
+</ParamField>
+
+<ParamField path="serverAddr" type="InetSocketAddress" required>
+  Client's address and port
+</ParamField>
+
+<ParamField path="routerAddr" type="InetSocketAddress" required>
+  Router address for packet forwarding
+</ParamField>
+
+<ParamField path="data" type="String" required>
+  HTTP response data to send
+</ParamField>
+
+```java
+String httpResponse = "HTTP/1.0 200 OK\r\n\r\nHello World";
+requestresponse(
+    socket,
+    new InetSocketAddress(clientAddr, clientPort),
+    new InetSocketAddress(routerAddr, routerPort),
+    httpResponse
+);
+```
+
+<Note>
+Data is automatically chunked into 1013-byte packets and transmitted using a sliding window protocol.
+</Note>
+
+### sendreq()
+
+Implements the sliding window transmission with selective repeat.
+
+<ParamField path="nofpackets" type="int" required>
+  Total number of packets to send
+</ParamField>
+
+<ParamField path="serverAddr" type="InetSocketAddress" required>
+  Destination client address
+</ParamField>
+
+<ParamField path="routerAddr" type="InetSocketAddress" required>
+  Router address
+</ParamField>
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Socket for transmission
+</ParamField>
+
+<ParamField path="chunks" type="List<byte[]>" required>
+  Data chunks to send
+</ParamField>
+
+<Accordion title="Window Management" icon="window-restore">
+  - Initial window size: 100 packets
+  - Sends window-sized batch initially
+  - On receiving ACK, slides window forward
+  - On receiving NACK (type=4), retransmits specific packet
+  - Each packet has its own timeout timer thread
+</Accordion>
+
+### isAcked()
+
+Retransmission handler invoked on packet timeout.
+
+<ParamField path="seq" type="int" required>
+  Sequence number to check
+</ParamField>
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Socket for retransmission
+</ParamField>
+
+<ParamField path="retries" type="int" required>
+  Current retry count
+</ParamField>
+
+<Warning>
+Packets are abandoned after 10 retry attempts to prevent infinite loops.
+</Warning>
+
+## Data Reception
+
+### getRequestFromPacket()
+
+Receives and assembles all packets from the client using Selective Repeat.
+
+<ParamField path="socket" type="DatagramSocket" required>
+  Socket to receive from
+</ParamField>
+
+<ParamField path="totalPackets" type="int" required>
+  Expected number of packets
+</ParamField>
+
+<ResponseField name="request" type="String">
+  Complete assembled HTTP request
+</ResponseField>
+
+<Accordion title="Reception Strategy" icon="inbox">
+  - Maintains a sliding window (initial size: 100)
+  - Buffers out-of-order packets in a HashMap
+  - Sends cumulative ACKs for in-order packets
+  - Sends NACKs for detected gaps
+  - Sends duplicate ACKs for already-received packets
+</Accordion>
+
+```java
+String httpRequest = getRequestFromPacket(socket, 15);
+// Returns: "GET /index.html HTTP/1.0\r\n\r\n"
+```
+
+## Protocol Variables
+
+```java
+private DatagramSocket connectionSocket;        // Main listening socket
+private static HashMap<InetAddress, DatagramSocket> socketMapping;
+private static String directory;                 // File serving directory
+private static boolean verbose;                  // Logging flag
+
+private static int lastackRec = 0;              // Last ACK sent
+private static int windowRec = 100;             // Receive window size
+private static List<DatagramPacket> packets;    // Packet buffer
+```
+
+## HTTP Request Handling
+
+The server integrates with `HttpcLib` to process HTTP requests:
+
+```java
+String httpResponse = "";
+String[] words = request.split(" ");
+if (words[0].equals("GET")) {
+    httpResponse = HttpcLib.getResponse(request, directory, verbose);
+} else {
+    httpResponse = HttpcLib.postResponse(request, directory, verbose);
+}
+```
+
+## Verbose Logging
+
+When `verbose` is enabled, the server logs:
+
+- Waiting for connection request
+- Client handler creation
+- Handler waiting for packets
+- Request received notification
+- Response creation and sending progress
+- ACK reception status
+
+```java
+if (verbose) {
+    System.out.println("Handler " + client + ": request received");
+}
+```
+
+## Example Usage
+
+```java
+import java.io.IOException;
+import Server.ServerTcpProtocl;
+
+public class ServerExample {
+    public static void main(String[] args) {
+        try {
+            // Start server on port 8000
+            ServerTcpProtocl server = new ServerTcpProtocl(
+                8000,                    // Listen port
+                "./public",             // Serve files from ./public
+                true                     // Enable verbose logging
+            );
+            
+            // Server runs indefinitely, handling multiple clients
+            
+        } catch (IOException e) {
+            System.err.println("Server error: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+## Error Handling
+
+<AccordionGroup>
+  <Accordion title="Socket Timeout" icon="clock">
+    30ms timeout on ACK reception. On timeout, retransmits the size packet or continues waiting.
+  </Accordion>
+  
+  <Accordion title="Connection Closure" icon="xmark">
+    When receiving a packet with type=6, the handler terminates and removes the client from the mapping.
+  </Accordion>
+  
+  <Accordion title="Handler Errors" icon="bug">
+    Runtime exceptions in handlers are caught and logged, and the client is removed from the mapping.
+  </Accordion>
+</AccordionGroup>
+
+## Thread Safety
+
+<Warning>
+The `isAcked()` method is synchronized to prevent race conditions when multiple timer threads attempt retransmission.
+</Warning>
+
+## Performance Characteristics
+
+<Tip>
+The server can handle multiple clients concurrently through:
+- One dedicated DatagramSocket per client
+- Separate handler threads for each connection
+- HashMap-based socket mapping for O(1) client lookup
+</Tip>
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="ReliableClientProtocol" icon="computer" href="/api/client-protocol">
+    Client-side protocol implementation
+  </Card>
+  <Card title="Packet Format" icon="box" href="/api/packet-format">
+    Packet structure and builder pattern
+  </Card>
+</CardGroup>

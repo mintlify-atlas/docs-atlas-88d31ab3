@@ -1,0 +1,565 @@
+---
+title: Router Configuration
+description: Configure the UDP router to simulate network conditions with packet loss and delay
+---
+
+The router is a logical UDP packet dispatcher that simulates real-world network conditions by introducing packet loss and delay. It's essential for testing the Selective Repeat protocol implementation.
+
+## Overview
+
+The router receives UDP packets from clients and servers, then dispatches them to their destinations. During delivery, it can simulate adverse network conditions:
+
+<CardGroup cols={2}>
+  <Card title="Packet Loss" icon="circle-xmark">
+    Randomly drop packets based on a configured probability
+  </Card>
+  <Card title="Network Delay" icon="hourglass">
+    Introduce variable delays up to a maximum duration
+  </Card>
+</CardGroup>
+
+<Info>The router changes the peer address value from `toAddr` to `fromAddr` during packet delivery, enabling proper bidirectional communication.</Info>
+
+## Command Syntax
+
+```bash
+router --port int --drop-rate float --max-delay duration --seed int
+```
+
+## Configuration Parameters
+
+<ParamField path="--port" type="integer" default="3000">
+  Port number that the router listens on for incoming packets.
+
+  ```bash
+  router --port 3000
+  ```
+
+  <Note>Both client and server must communicate through this port. Choose a port that doesn't conflict with your server port.</Note>
+</ParamField>
+
+<ParamField path="--drop-rate" type="float" default="0.0">
+  Probability (0.0 to 1.0) that any given packet will be dropped during transmission.
+
+  ```bash
+  router --port 3000 --drop-rate 0.2
+  ```
+
+  <Warning>A drop rate of 0.2 means 20% of packets will be dropped. Use 0 to disable packet loss.</Warning>
+
+  **Common values:**
+  - `0.0` - No packet loss (ideal network)
+  - `0.05` - 5% loss (good network)
+  - `0.1` - 10% loss (typical Wi-Fi)
+  - `0.2` - 20% loss (poor network)
+  - `0.3+` - High loss (stress testing)
+</ParamField>
+
+<ParamField path="--max-delay" type="duration" default="0">
+  Maximum duration that any packet can be delayed. Each packet receives a random delay between 0 and this value.
+
+  ```bash
+  router --port 3000 --max-delay 100ms
+  ```
+
+  <Note>Use 0 to route packets immediately without delay. Format: `5s`, `100ms`, `1m`, etc.</Note>
+
+  **Common values:**
+  - `0` - No delay (instant delivery)
+  - `10ms` - Minimal delay (LAN)
+  - `50ms` - Moderate delay (internet)
+  - `100ms` - High delay (poor connection)
+  - `500ms+` - Very high delay (extreme testing)
+</ParamField>
+
+<ParamField path="--seed" type="integer" default="current time">
+  Seed value for the random number generator. Using the same seed produces repeatable random behaviors.
+
+  ```bash
+  router --port 3000 --drop-rate 0.2 --seed 42
+  ```
+
+  <Tip>Use a fixed seed for reproducible tests. Omit this parameter for different behavior each run.</Tip>
+</ParamField>
+
+## Basic Configurations
+
+### Ideal Network (No Loss, No Delay)
+
+Test basic functionality without network issues:
+
+```bash
+router --port 3000
+```
+
+Output:
+```
+config: drop-rate=0.00, max-delay=0s, seed=1709503245123
+router is listening at :3000
+```
+
+<Note>This configuration is useful for verifying that your client and server work correctly before introducing network issues.</Note>
+
+### Light Packet Loss
+
+Simulate a good network with occasional packet loss:
+
+```bash
+router --port 3000 --drop-rate 0.05 --max-delay 10ms
+```
+
+Output:
+```
+config: drop-rate=0.05, max-delay=10ms, seed=1709503267890
+router is listening at :3000
+```
+
+<Tip>5% packet loss with 10ms delay simulates typical Wi-Fi conditions.</Tip>
+
+### Moderate Network Conditions
+
+Test resilience with noticeable packet loss and delay:
+
+```bash
+router --port 3000 --drop-rate 0.1 --max-delay 50ms
+```
+
+Output:
+```
+config: drop-rate=0.10, max-delay=50ms, seed=1709503289456
+router is listening at :3000
+```
+
+### Poor Network Conditions
+
+Stress test with high packet loss:
+
+```bash
+router --port 3000 --drop-rate 0.2 --max-delay 100ms
+```
+
+Output:
+```
+config: drop-rate=0.20, max-delay=100ms, seed=1709503301234
+router is listening at :3000
+```
+
+<Warning>20% packet loss represents a very poor network. Your Selective Repeat implementation should handle this gracefully with retransmissions.</Warning>
+
+### Extreme Testing
+
+Test protocol limits with severe network issues:
+
+```bash
+router --port 3000 --drop-rate 0.3 --max-delay 200ms
+```
+
+Output:
+```
+config: drop-rate=0.30, max-delay=200ms, seed=1709503312567
+router is listening at :3000
+```
+
+<Warning>30% loss may cause timeouts and slow transfers. This tests the robustness of your implementation.</Warning>
+
+## Reproducible Testing
+
+### Using Fixed Seeds
+
+For reproducible test scenarios, use the same seed value:
+
+<CodeGroup>
+
+```bash Test Run 1
+router --port 3000 --drop-rate 0.2 --max-delay 50ms --seed 42
+```
+
+```bash Test Run 2 (Same Behavior)
+router --port 3000 --drop-rate 0.2 --max-delay 50ms --seed 42
+```
+
+</CodeGroup>
+
+<Info>With the same seed, the exact same packets will be dropped and delayed in the same way. This is crucial for debugging specific issues.</Info>
+
+### Variable Testing
+
+For different behavior each time, omit the seed or use different values:
+
+```bash
+router --port 3000 --drop-rate 0.15 --max-delay 75ms
+```
+
+The seed will default to the current timestamp, ensuring unique behavior.
+
+## Router Logging
+
+The router logs all activity to both console and `router.log` file.
+
+### Log Format
+
+<CodeGroup>
+
+```log Packet Received
+[queue=5] packet #123, 192.168.1.100:5000 -> 192.168.1.101:8080, sz=1024 is delayed for 45ms
+```
+
+```log Packet Delivered
+[queue=4] packet #123, 192.168.1.100:5000 -> 192.168.1.101:8080, sz=1024 is delivered
+```
+
+```log Packet Dropped
+[queue=3] packet #124, 192.168.1.100:5000 -> 192.168.1.101:8080, sz=512 is dropped
+```
+
+</CodeGroup>
+
+### Understanding Log Entries
+
+<Steps>
+  <Step title="Queue Size">
+    `[queue=5]` shows the number of packets currently waiting for delivery.
+  </Step>
+
+  <Step title="Packet Info">
+    `#123` is the sequence number of the packet.
+  </Step>
+
+  <Step title="Source and Destination">
+    `192.168.1.100:5000 -> 192.168.1.101:8080` shows the packet route.
+  </Step>
+
+  <Step title="Packet Size">
+    `sz=1024` indicates the packet payload size in bytes.
+  </Step>
+
+  <Step title="Action">
+    The final part indicates what happened: `delayed`, `delivered`, or `dropped`.
+  </Step>
+</Steps>
+
+### Viewing Logs
+
+<Tabs>
+  <Tab title="Console Output">
+    Logs are displayed in real-time on the console:
+
+    ```bash
+    router --port 3000 --drop-rate 0.1
+    ```
+
+    You'll see packet activity as it happens.
+  </Tab>
+  
+  <Tab title="Log File">
+    All logs are also written to `router.log`:
+
+    ```bash
+    tail -f router.log
+    ```
+
+    This allows monitoring without cluttering the console.
+  </Tab>
+  
+  <Tab title="Analyze Logs">
+    Count dropped packets:
+
+    ```bash
+    grep "is dropped" router.log | wc -l
+    ```
+
+    Count delivered packets:
+
+    ```bash
+    grep "is delivered" router.log | wc -l
+    ```
+  </Tab>
+</Tabs>
+
+## Testing Scenarios
+
+<Tabs>
+  <Tab title="Protocol Verification">
+    Verify basic protocol correctness:
+
+    ```bash
+    # No packet loss or delay
+    router --port 3000 --seed 1
+    ```
+
+    Expected:
+    - All packets delivered in order
+    - No retransmissions needed
+    - Fast transfer times
+  </Tab>
+  
+  <Tab title="Loss Tolerance">
+    Test Selective Repeat with packet loss:
+
+    ```bash
+    # 10% packet loss
+    router --port 3000 --drop-rate 0.1 --seed 42
+    ```
+
+    Expected:
+    - Some packets dropped
+    - Automatic retransmissions
+    - All data eventually delivered
+    - ACK/NACK packets working
+  </Tab>
+  
+  <Tab title="Delay Handling">
+    Test with out-of-order delivery:
+
+    ```bash
+    # Variable delay without loss
+    router --port 3000 --max-delay 100ms --seed 123
+    ```
+
+    Expected:
+    - Packets arrive out of order
+    - Receiver buffers and reorders
+    - Sliding window protocol works
+  </Tab>
+  
+  <Tab title="Combined Stress">
+    Test under realistic poor conditions:
+
+    ```bash
+    # 15% loss and 75ms delay
+    router --port 3000 --drop-rate 0.15 --max-delay 75ms --seed 999
+    ```
+
+    Expected:
+    - Packets dropped and delayed
+    - Multiple retransmissions
+    - Protocol remains stable
+    - Transfer completes successfully
+  </Tab>
+  
+  <Tab title="Extreme Stress">
+    Test protocol limits:
+
+    ```bash
+    # 30% loss and 200ms delay
+    router --port 3000 --drop-rate 0.3 --max-delay 200ms
+    ```
+
+    Expected:
+    - Very slow transfers
+    - Many retransmissions
+    - Possible timeouts
+    - Tests retry limits
+  </Tab>
+</Tabs>
+
+## Advanced Configuration
+
+### Multi-Client Testing
+
+The router handles multiple clients simultaneously:
+
+```bash
+router --port 3000 --drop-rate 0.1 --max-delay 50ms
+```
+
+<Steps>
+  <Step title="Start Router">
+    One router instance can serve multiple clients and servers.
+  </Step>
+
+  <Step title="Start Multiple Servers">
+    ```bash
+    # Terminal 1
+    httpfs -p 8080
+
+    # Terminal 2
+    httpfs -p 8081
+    ```
+  </Step>
+
+  <Step title="Connect Multiple Clients">
+    Each client can connect independently:
+
+    ```bash
+    httpc get http://localhost:8080/get
+    httpc get http://localhost:8081/get
+    ```
+  </Step>
+</Steps>
+
+<Info>The router maintains separate packet queues and applies drop/delay rules independently to each packet.</Info>
+
+### Performance Tuning
+
+<CardGroup cols={2}>
+  <Card title="Delay Distribution" icon="chart-line">
+    Delay is uniformly distributed between 0 and max-delay. Each packet gets a random delay value.
+
+    ```go
+    delay := rand.Intn(100) * maxDelay / 100
+    ```
+  </Card>
+  
+  <Card title="Queue Management" icon="list">
+    The router tracks queue size for delayed packets. High queue sizes indicate network congestion.
+
+    ```log
+    [queue=50] packet #456 is delayed for 89ms
+    ```
+  </Card>
+</CardGroup>
+
+## Packet Format
+
+Understanding the packet structure helps with debugging:
+
+<CodeGroup>
+
+```go Packet Structure
+type Packet struct {
+    Type     uint8      // 1 byte: ACK (1), DATA (0), etc.
+    SeqNum   uint32     // 4 bytes: sequence number
+    ToAddr   *net.UDPAddr
+    FromAddr *net.UDPAddr
+    Payload  []byte     // up to 1024 bytes total
+}
+```
+
+```go Packet Size Limits
+const (
+    minLen = 11   // Minimum packet size (header only)
+    maxLen = 1024 // Maximum packet size (including payload)
+)
+```
+
+</CodeGroup>
+
+<Warning>Packets smaller than 11 bytes or larger than 1024 bytes are rejected as invalid.</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Router not starting">
+    Check if the port is already in use:
+
+    ```bash
+    # Check port usage
+    lsof -i :3000
+
+    # Use a different port
+    router --port 3001
+    ```
+  </Accordion>
+
+  <Accordion title="Too many packets dropped">
+    If transfers are failing, reduce the drop rate:
+
+    ```bash
+    # From 30% to 10%
+    router --port 3000 --drop-rate 0.1 --max-delay 50ms
+    ```
+
+    Check router logs to see actual drop statistics:
+
+    ```bash
+    grep -c "is dropped" router.log
+    grep -c "is delivered" router.log
+    ```
+  </Accordion>
+
+  <Accordion title="Packets timing out">
+    Reduce max-delay or increase client timeout values:
+
+    ```bash
+    # Reduce delay from 200ms to 50ms
+    router --port 3000 --drop-rate 0.1 --max-delay 50ms
+    ```
+  </Accordion>
+
+  <Accordion title="Can't reproduce issue">
+    Use a fixed seed to reproduce the same packet loss pattern:
+
+    ```bash
+    # This will always drop the same packets
+    router --port 3000 --drop-rate 0.2 --seed 42
+    ```
+  </Accordion>
+
+  <Accordion title="Log file growing too large">
+    Truncate or rotate the log file:
+
+    ```bash
+    # Clear the log
+    > router.log
+
+    # Or move it
+    mv router.log router.log.old
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Complete Testing Example
+
+Here's a comprehensive test setup:
+
+<Steps>
+  <Step title="Start Router with Logging">
+    ```bash
+    router --port 3000 --drop-rate 0.15 --max-delay 50ms --seed 42 | tee test-router.log
+    ```
+
+    This saves console output to a file while displaying it.
+  </Step>
+
+  <Step title="Monitor Router Activity">
+    In another terminal:
+
+    ```bash
+    watch -n 1 'tail -20 router.log'
+    ```
+
+    This shows the last 20 log lines, updating every second.
+  </Step>
+
+  <Step title="Start Server">
+    ```bash
+    cd Server
+    mvn exec:java -Dexec.mainClass="Server.ServerCommand"
+    # Enter: httpfs -v -p 8080
+    ```
+  </Step>
+
+  <Step title="Run Client Tests">
+    ```bash
+    cd Client
+    mvn exec:java -Dexec.mainClass="client.CLient"
+    # Enter: httpc get -v http://localhost:8080/get
+    ```
+  </Step>
+
+  <Step title="Analyze Results">
+    After testing, analyze the logs:
+
+    ```bash
+    # Count packets
+    grep -c "is delivered" router.log
+    grep -c "is dropped" router.log
+    grep -c "is delayed" router.log
+
+    # Calculate actual drop rate
+    echo "scale=2; $(grep -c 'is dropped' router.log) * 100 / ($(grep -c 'is delivered' router.log) + $(grep -c 'is dropped' router.log))" | bc
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Client Usage" icon="terminal" href="/guides/client-usage">
+    Test your router configuration with the client
+  </Card>
+  <Card title="Server Setup" icon="server" href="/guides/server-setup">
+    Configure the server to work with the router
+  </Card>
+</CardGroup>

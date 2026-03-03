@@ -1,0 +1,520 @@
+---
+title: 'Client Component'
+description: 'HTTP client with reliable UDP transport using Selective Repeat protocol'
+---
+
+The client component implements a curl-like HTTP client (`Httpc`) that communicates over UDP using a reliable transport protocol (`ReliableClientProtocol`) based on Selective Repeat ARQ.
+
+## Architecture Overview
+
+The client consists of two main classes that work together:
+
+<CardGroup cols={2}>
+  <Card title="Httpc" icon="terminal">
+    Command-line HTTP client that parses user commands and constructs HTTP requests
+  </Card>
+  <Card title="ReliableClientProtocol" icon="arrows-rotate">
+    Implements Selective Repeat ARQ protocol for reliable data transfer over UDP
+  </Card>
+</CardGroup>
+
+## Httpc Class
+
+The `Httpc` class provides a curl-like interface for making HTTP requests over the reliable UDP transport.
+
+### Key Responsibilities
+
+- Parse command-line arguments (GET/POST, headers, data, files)
+- Construct HTTP requests following the HTTPFC/1.0 protocol
+- Coordinate with `ReliableClientProtocol` for reliable transmission
+- Parse and format HTTP responses
+
+### Class Structure
+
+<Tabs>
+  <Tab title="Main Methods">
+    ```java client/Httpc.java
+    public class Httpc {
+        // Sends an HTTP request and returns the response
+        public Response sendRequest(
+            int port, 
+            String server, 
+            String path, 
+            String type, 
+            boolean verbose, 
+            List headers, 
+            Object data
+        )
+        
+        // Parses command string and returns response
+        public Response getResponse(String cmd) throws IOException
+        
+        // Returns help text for commands
+        public String help(String option)
+    }
+    ```
+  </Tab>
+  <Tab title="Request Flow">
+    The `sendRequest` method follows this sequence:
+    
+    1. Create UDP socket
+    2. Build HTTP request string with method, path, headers, and body
+    3. Establish connection via `ReliableClientProtocol.connection()`
+    4. Send request via `ReliableClientProtocol.requestresponse()`
+    5. Parse response (status, headers, body)
+    6. Return `Response` object
+  </Tab>
+</Tabs>
+
+### HTTP Request Format
+
+<CodeGroup>
+```java GET Request
+String req = "GET " + path + " HTTPFC/1.0" + System.lineSeparator();
+for (Object header : headers) {
+    req = req + header.toString() + System.lineSeparator();
+}
+```
+
+```java POST Request
+String req = "POST " + path + " HTTPFC/1.0" + System.lineSeparator();
+for (Object header : headers) {
+    req = req + header.toString() + System.lineSeparator();
+}
+req = req + "Content-Length: " + data.toString().length();
+req = req + System.lineSeparator() + "\n";
+req = req + data.toString() + "\n\n";
+```
+</CodeGroup>
+
+### Command-Line Interface
+
+The client supports curl-like commands:
+
+<Tabs>
+  <Tab title="GET">
+    ```bash
+    httpc get [-v] [-h key:value] URL
+    ```
+    
+    **Options:**
+    - `-v` - Verbose mode (prints headers)
+    - `-h key:value` - Add HTTP headers
+    
+    **Example:**
+    ```bash
+    httpc get -v -h "User-Agent:MyClient" http://example.com:8000/file.txt
+    ```
+  </Tab>
+  <Tab title="POST">
+    ```bash
+    httpc post [-v] [-h key:value] [-d inline-data] [-f file] URL
+    ```
+    
+    **Options:**
+    - `-v` - Verbose mode
+    - `-h key:value` - Add HTTP headers
+    - `-d string` - Inline data for request body
+    - `-f file` - Read data from file
+    - `-o file` - Write response to file
+    
+    **Example:**
+    ```bash
+    httpc post -d '{"name":"value"}' http://example.com:8000/api
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The client uses the custom protocol `HTTPFC/1.0` (HTTP over Flow Control) instead of standard HTTP.
+</Note>
+
+## ReliableClientProtocol Class
+
+Implements the Selective Repeat ARQ protocol for reliable data transfer over unreliable UDP channels.
+
+### Protocol Features
+
+<CardGroup cols={2}>
+  <Card title="Selective Repeat" icon="list-check">
+    Individual acknowledgment of packets with selective retransmission
+  </Card>
+  <Card title="Sliding Window" icon="window">
+    Window size of 100 packets for efficient throughput
+  </Card>
+  <Card title="Three-Way Handshake" icon="handshake">
+    SYN, SYN-ACK, ACK connection establishment
+  </Card>
+  <Card title="Packet Chunking" icon="scissors">
+    Splits data into 1013-byte chunks for transmission
+  </Card>
+</CardGroup>
+
+### Class Structure
+
+```java client/ReliableClientProtocol.java
+public class ReliableClientProtocol {
+    static int lastack = 0;        // Last acknowledged packet
+    static int window = 100;        // Current window size
+    static List<DatagramPacket> packets = new ArrayList<>();
+    static InetSocketAddress routerAddr = new InetSocketAddress("127.0.0.1", 3000);
+    
+    // Establishes three-way handshake connection
+    public static int connection(DatagramSocket socket, InetSocketAddress serverAddr)
+    
+    // Sends request and receives response
+    public static String requestresponse(DatagramSocket socket, 
+                                         InetSocketAddress serverAddr, 
+                                         String data)
+    
+    // Sends request packets using sliding window
+    public static void sendreq(int nofpackets, 
+                               InetSocketAddress serverAddr, 
+                               DatagramSocket socket, 
+                               List<byte[]> chunks)
+    
+    // Timer callback for retransmission
+    public synchronized static void isAcked(int seq, 
+                                           DatagramSocket socket, 
+                                           int retries)
+    
+    // Receives and reassembles response packets
+    static String response(DatagramSocket socket)
+}
+```
+
+### Connection Establishment
+
+The three-way handshake process:
+
+<Steps>
+  <Step title="Send SYN">
+    Client sends a packet with type=2 (SYN) and sequence number 1
+    
+    ```java client/ReliableClientProtocol.java
+    Packet p = new Packet.Builder()
+        .setType(2)  // SYN
+        .setSequenceNumber(1L)
+        .setPortNumber(serverAddr.getPort())
+        .setPeerAddress(serverAddr.getAddress())
+        .setPayload("1".getBytes())
+        .create();
+    socket.send(packet);
+    ```
+  </Step>
+  
+  <Step title="Receive SYN-ACK">
+    Server responds with type=3 (SYN-ACK) containing the dedicated port number
+    
+    ```java client/ReliableClientProtocol.java
+    socket.receive(synack);
+    Packet synackpacket = Packet.fromBytes(synack.getData());
+    if (synackpacket.getType() == 3 && synackpacket.getSequenceNumber() == 1) {
+        // Extract server port from payload
+        String serverport = new String(synackpacket.getPayload());
+        int sport = Integer.parseInt(serverport.trim());
+    }
+    ```
+  </Step>
+  
+  <Step title="Send ACK">
+    Client completes handshake with type=1 (ACK)
+    
+    ```java client/ReliableClientProtocol.java
+    p = new Packet.Builder()
+        .setType(1)  // ACK
+        .setSequenceNumber(p.getSequenceNumber())
+        .setPortNumber(p.getPeerPort())
+        .setPeerAddress(p.getPeerAddress())
+        .setPayload("11".getBytes())
+        .create();
+    socket.send(packet);
+    ```
+  </Step>
+</Steps>
+
+### Data Transmission Flow
+
+<Tabs>
+  <Tab title="Sending Data">
+    The `requestresponse` method handles the complete send/receive cycle:
+    
+    ```java client/ReliableClientProtocol.java
+    // 1. Split data into 1013-byte chunks
+    final int sizeMB = 1013;
+    List<byte[]> chunks = IntStream.iterate(0, i -> i + sizeMB)
+        .limit((datab.length + sizeMB - 1) / sizeMB)
+        .mapToObj(i -> Arrays.copyOfRange(datab, i, Math.min(i + sizeMB, datab.length)))
+        .collect(Collectors.toList());
+    
+    // 2. Send packet count as first packet (seq=1)
+    int nofpackets = chunks.size();
+    Packet p = new Packet.Builder()
+        .setType(0)
+        .setSequenceNumber(1L)
+        .setPayload(Integer.toString(nofpackets + 1).getBytes())
+        .create();
+    socket.send(size);
+    
+    // 3. Wait for ACK of packet count
+    socket.receive(ack);
+    
+    // 4. Send all data packets using sliding window
+    sendreq(nofpackets, serverAddr, socket, chunks);
+    
+    // 5. Receive response
+    String res = response(socket);
+    ```
+  </Tab>
+  
+  <Tab title="Sliding Window">
+    The `sendreq` method implements the sliding window protocol:
+    
+    ```java client/ReliableClientProtocol.java
+    // Send initial window of packets (up to 100)
+    int tobesent = Math.min(nofpackets, window);
+    for (int i = 2; i <= tobesent + 1; i++) {
+        socket.send(packets.get(i - 2));
+        // Start timer thread for retransmission
+        Thread t = new Thread(new Timer(i, socket, 0));
+        t.start();
+    }
+    
+    // Process ACKs and slide window
+    while (lastack < nofpackets + 1) {
+        socket.receive(ack);
+        Packet ackpacket = Packet.fromBytes(ack.getData());
+        
+        if (ackpacket.getType() == 1) {  // ACK
+            int newacs = (int) ackpacket.getSequenceNumber() - lastack + 1;
+            // Send new packets in window
+            for (int i = window; i < window + newacs; i++) {
+                socket.send(packets.get(i));
+                Thread t = new Thread(new Timer(i + 2, socket, 0));
+                t.start();
+            }
+            window = window + newacs;
+            lastack = (int) ackpacket.getSequenceNumber();
+        }
+        
+        if (ackpacket.getType() == 4) {  // NACK
+            // Retransmit specific packet
+            socket.send(packets.get((int) ackpacket.getSequenceNumber() - 2));
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Receiving Response">
+    The `getRequestFromPacket` method receives packets using Selective Repeat:
+    
+    ```java client/ReliableClientProtocol.java
+    int expseqNum = 2;  // Expected sequence number
+    int maxWindow = 100;
+    HashMap<Integer, byte[]> data = new HashMap<>();
+    
+    while (expseqNum <= totalPackets) {
+        socket.receive(req);
+        Packet p = Packet.fromBytes(req.getData());
+        int pSeq = (int) p.getSequenceNumber();
+        
+        if (pSeq == expseqNum) {
+            // In-order packet: store and advance window
+            data.put(expseqNum, p.getPayload());
+            expseqNum++;
+            maxWindow++;
+            // Send cumulative ACK
+            Packet ack = new Packet(1, i-1, clientAddress, clientPort, new byte[0]);
+            socket.send(ackP);
+        }
+        else if (pSeq > expseqNum) {
+            // Out-of-order packet: store and send NACK for missing
+            data.put(pSeq, p.getPayload());
+            for (i = expseqNum; i < pSeq; i++) {
+                if (!data.containsKey(i)) {
+                    Packet nack = new Packet(4, i, clientAddress, clientPort, new byte[0]);
+                    socket.send(nackP);
+                }
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Timeout and Retransmission
+
+The `Timer` class handles packet timeouts:
+
+```java util/Timer.java
+public class Timer implements Runnable {
+    int seq;         // Sequence number
+    int retries;     // Retry count
+    DatagramSocket socket;
+    
+    public void run() {
+        Thread.sleep(30);  // Wait 30ms
+        ReliableClientProtocol.isAcked(seq, socket, retries);
+    }
+}
+```
+
+```java client/ReliableClientProtocol.java
+public synchronized static void isAcked(int seq, DatagramSocket socket, int retries) {
+    if (seq <= lastack || retries >= 10) {
+        // Packet acknowledged or max retries reached
+        return;
+    }
+    // Retransmit packet
+    socket.send(packets.get(seq - 2));
+    Thread t = new Thread(new Timer(seq, socket, retries + 1));
+    t.start();
+}
+```
+
+<Warning>
+  The protocol gives up after 10 retransmission attempts, which may result in incomplete data transfer over extremely lossy networks.
+</Warning>
+
+## Packet Structure
+
+The `Packet` class encapsulates all network packets:
+
+```java util/Packet.java
+public class Packet {
+    private final int type;                    // Packet type (0-6)
+    private final long sequenceNumber;          // Sequence number
+    private final InetAddress peerAddress;      // Peer IP address
+    private final int peerPort;                 // Peer port
+    private final byte[] payload;               // Packet payload (max 1013 bytes)
+    
+    public static final int MIN_LEN = 11;       // Minimum packet size
+    public static final int MAX_LEN = 11 + 1024; // Maximum packet size
+}
+```
+
+### Packet Types
+
+| Type | Name | Description |
+|------|------|-------------|
+| 0 | DATA | Data packet containing payload |
+| 1 | ACK | Acknowledgment packet |
+| 2 | SYN | Synchronization packet (connection request) |
+| 3 | SYN-ACK | Synchronization acknowledgment |
+| 4 | NACK | Negative acknowledgment (request retransmission) |
+| 6 | FIN | Finish packet (close connection) |
+
+### Wire Format
+
+Packets are serialized in BigEndian format:
+
+```
++--------+----------------+----------------+-----------+-----------+
+| Type   | Sequence Num   | Peer Address   | Peer Port | Payload   |
+| 1 byte | 4 bytes        | 4 bytes        | 2 bytes   | 0-1013 B  |
++--------+----------------+----------------+-----------+-----------+
+```
+
+<CodeGroup>
+```java Serialization
+public byte[] toBytes() {
+    ByteBuffer buf = ByteBuffer.allocate(MAX_LEN).order(ByteOrder.BIG_ENDIAN);
+    buf.put((byte) type);
+    buf.putInt((int) sequenceNumber);
+    buf.put(peerAddress.getAddress());
+    buf.putShort((short) peerPort);
+    buf.put(payload);
+    buf.flip();
+    byte[] raw = new byte[buf.remaining()];
+    buf.get(raw);
+    return raw;
+}
+```
+
+```java Deserialization
+public static Packet fromBytes(byte[] bytes) throws IOException {
+    ByteBuffer buf = ByteBuffer.allocate(MAX_LEN).order(ByteOrder.BIG_ENDIAN);
+    buf.put(bytes);
+    buf.flip();
+    
+    Builder builder = new Builder();
+    builder.setType(Byte.toUnsignedInt(buf.get()));
+    builder.setSequenceNumber(Integer.toUnsignedLong(buf.getInt()));
+    
+    byte[] host = new byte[]{buf.get(), buf.get(), buf.get(), buf.get()};
+    builder.setPeerAddress(Inet4Address.getByAddress(host));
+    builder.setPortNumber(Short.toUnsignedInt(buf.getShort()));
+    
+    byte[] payload = new byte[buf.remaining()];
+    buf.get(payload);
+    builder.setPayload(payload);
+    
+    return builder.create();
+}
+```
+</CodeGroup>
+
+## Usage Example
+
+<Steps>
+  <Step title="Create Client Instance">
+    ```java
+    Httpc client = new Httpc();
+    ```
+  </Step>
+  
+  <Step title="Build Command String">
+    ```java
+    String command = "httpc get -v http://localhost:8000/file.txt";
+    ```
+  </Step>
+  
+  <Step title="Get Response">
+    ```java
+    Response response = client.getResponse(command);
+    System.out.println(response.toString());
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+<ParamField path="routerAddr" type="InetSocketAddress" default="127.0.0.1:3000">
+  The address of the packet router that forwards packets between client and server
+</ParamField>
+
+<ParamField path="window" type="int" default="100">
+  The sliding window size for the Selective Repeat protocol
+</ParamField>
+
+<ParamField path="chunkSize" type="int" default="1013">
+  The maximum payload size per packet in bytes
+</ParamField>
+
+<ParamField path="timeout" type="int" default="30ms">
+  The timeout duration before packet retransmission
+</ParamField>
+
+<ParamField path="maxRetries" type="int" default="10">
+  Maximum number of retransmission attempts before giving up
+</ParamField>
+
+## Response Object
+
+The `Response` class encapsulates HTTP responses:
+
+```java util/Response.java
+public class Response {
+    private String status;    // HTTP status text ("OK", "Not Found", etc.)
+    private String code;      // HTTP status code ("200", "404", etc.)
+    private String header;    // Response headers (null if not verbose)
+    private String body;      // Response body
+    private boolean inFile;   // Whether to write to file
+    private String file;      // Output file path
+    private String error;     // Error message if any
+}
+```
+
+<Note>
+  In non-verbose mode, only the response body is returned. Use the `-v` flag to see headers and status information.
+</Note>
