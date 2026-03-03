@@ -64,14 +64,22 @@ Open a new terminal and start the server:
   </Step>
 
   <Step title="Run the Server">
+    Start the server program:
+    
     ```bash
-    java -cp target/classes Server.ServerCommand -v -p 8000 -d ./data
+    java -cp target/classes Server.ServerCommand
+    ```
+    
+    When prompted, enter the server command:
+    
+    ```bash
+    httpfs -v -p 8080 -d ./data
     ```
 
     **Parameters:**
     - `-v` - Verbose mode (shows detailed logging)
-    - `-p 8000` - Server listens on port 8000
-    - `-d ./data` - Directory for file storage
+    - `-p 8080` - Server listens on port 8080 (default)
+    - `-d ./data` - Directory for file storage (default is current directory)
   </Step>
 
   <Step title="Verify Server is Running">
@@ -79,6 +87,8 @@ Open a new terminal and start the server:
     ```
     Waiting for connection request
     ```
+    
+    <Note>The server is interactive and reads the command from stdin on startup.</Note>
   </Step>
 </Steps>
 
@@ -94,29 +104,46 @@ Open another terminal and make requests using the client:
     ```
   </Step>
 
-  <Step title="Make a GET Request">
+  <Step title="Start the Interactive Client">
+    Run the client program:
+    
     ```bash
-    java -cp target/classes client.CLient get -v http://localhost:8000/
+    java -cp target/classes client.CLient
+    ```
+    
+    The client will prompt you for commands interactively.
+  </Step>
+
+  <Step title="Make a GET Request">
+    When prompted "Enter your command..", type:
+    
+    ```bash
+    httpc get -v http://localhost:8080/
     ```
 
-    This retrieves a directory listing from the server.
+    This retrieves a directory listing from the server. When asked if you want to continue, type `yes`.
   </Step>
 
   <Step title="Make a POST Request">
-    Create a test file and upload it:
+    At the next command prompt, upload content:
 
     ```bash
-    echo "Hello, Selective Repeat UDP!" > test.txt
-    java -cp target/classes client.CLient post -v -d "Hello, Selective Repeat UDP!" http://localhost:8000/test.txt
+    httpc post -v -d "Hello, Selective Repeat UDP!" http://localhost:8080/test.txt
     ```
+    
+    Type `yes` to continue.
   </Step>
 
   <Step title="Retrieve the Uploaded File">
+    At the next prompt, retrieve the file you just created:
+    
     ```bash
-    java -cp target/classes client.CLient get -v http://localhost:8000/test.txt
+    httpc get -v http://localhost:8080/test.txt
     ```
 
-    You should see the content you uploaded.
+    You should see the content you uploaded. Type `no` to exit the client.
+    
+    <Info>The client runs in an interactive loop, prompting for commands until you type "no" when asked to continue.</Info>
   </Step>
 </Steps>
 
@@ -184,8 +211,9 @@ When you run a request, here's what happens under the hood:
 ### Client Commands
 
 <Accordion title="GET Request">
-  ```bash
-  java -cp target/classes client.CLient get [-v] [-h key:value] URL
+  **Syntax:**
+  ```
+  httpc get [-v] [-h key:value] URL
   ```
 
   **Options:**
@@ -194,14 +222,15 @@ When you run a request, here's what happens under the hood:
   - `-o filename` - Save output to file
 
   **Example:**
-  ```bash
-  java -cp target/classes client.CLient get -v -h "User-Agent:MyClient" http://localhost:8000/file.txt
+  ```
+  httpc get -v -h "User-Agent:MyClient" http://localhost:8080/file.txt
   ```
 </Accordion>
 
 <Accordion title="POST Request">
-  ```bash
-  java -cp target/classes client.CLient post [-v] [-h key:value] [-d data] [-f file] URL
+  **Syntax:**
+  ```
+  httpc post [-v] [-h key:value] [-d data] [-f file] URL
   ```
 
   **Options:**
@@ -212,8 +241,8 @@ When you run a request, here's what happens under the hood:
   - `-o filename` - Save output to file
 
   **Example:**
-  ```bash
-  java -cp target/classes client.CLient post -v -f input.txt http://localhost:8000/output.txt
+  ```
+  httpc post -v -f input.txt http://localhost:8080/output.txt
   ```
 </Accordion>
 
