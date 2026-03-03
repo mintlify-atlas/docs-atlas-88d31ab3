@@ -1,0 +1,75 @@
+{
+  "projectType": "general",
+  "projectName": "Selective Repeat UDP",
+  "projectDescription": "HTTP Protocol implementation using UDP with Selective Repeat ARQ for reliable data transmission",
+  "theme": "aspen",
+  "primaryColor": "#2563eb",
+  "lightColor": "#3b82f6",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Architecture",
+        "pages": [
+          "architecture/overview",
+          "architecture/selective-repeat",
+          "architecture/packet-structure"
+        ]
+      },
+      {
+        "group": "Components",
+        "pages": [
+          "components/client",
+          "components/server",
+          "components/router"
+        ]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "guides/installation",
+          "guides/client-usage",
+          "guides/server-setup",
+          "guides/router-configuration"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "api/client-protocol",
+          "api/server-protocol",
+          "api/packet-format",
+          "api/http-commands"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "HTTP over UDP implementation",
+    "Selective Repeat ARQ protocol for reliability",
+    "Three-way handshake connection establishment",
+    "Windowing mechanism for flow control",
+    "Packet loss simulation via router",
+    "GET and POST request support",
+    "File transfer capabilities",
+    "Configurable packet delay and drop rates"
+  ],
+  "publicApiSurface": [
+    "Httpc.sendRequest(port, server, path, type, verbose, headers, data)",
+    "Httpc.getResponse(cmd)",
+    "ReliableClientProtocol.connection(socket, serverAddr)",
+    "ReliableClientProtocol.requestresponse(socket, serverAddr, data)",
+    "HttpcLib.getResponse(request, dir, verbose)",
+    "HttpcLib.postResponse(req, directory, verbose)",
+    "ServerTcpProtocl(port, directory, verbose)",
+    "Packet.Builder().setType().setSequenceNumber().setPeerAddress().setPortNumber().setPayload().create()",
+    "router --port --drop-rate --max-delay --seed"
+  ]
+}
